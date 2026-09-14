@@ -1,0 +1,23 @@
+[project]
+name = "bistro"
+version = "0.1.0"
+description = "水浒角色对话系统：时间线驱动的角色扮演与关系引擎"
+requires-python = ">=3.9"
+dependencies = [
+  "fastapi",
+  "uvicorn",
+  "asyncpg",
+  "pydantic-settings",
+  "httpx",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
