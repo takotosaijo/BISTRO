@@ -11,13 +11,17 @@
 ## 快照
 
 - 更新时间：2026-09-15
-- 最新提交：`a60c824 first commit`（工作区有未提交改动：`AGENTS.md`、`PROGRESS.md`、
-  `DECISIONS.md`、`Makefile`、`db/CONSTRAINTS.md`、`README.md`）
-- 测试：**9/9 通过**（`make test`）
+- 最新提交：`7088c06 工程管理骨架：AGENTS.md / PROGRESS.md / DECISIONS.md + Makefile`
+  （工作区有未提交改动：`.env.example`、`Makefile`、`README.md`、`AGENTS.md`、`DECISIONS.md`、
+  `PROGRESS.md`、`app/config.py`、`app/providers/`、`tests/test_provider_config.py`、
+  `scripts/check_llm.py`、`scripts/check_secrets.sh`）
+- 测试：**16/16 通过**（`make test`）
 - 数据冒烟测试：**7/7 通过**（`db/tests/verify_seed.sql`）
+- 密钥泄漏检查：**通过**（`make secrets`：`.env` 仍被忽略、被追踪文件与提交历史里都没有密钥）
 - 数据库：Docker 容器 `mypg`（`pgvector/pgvector:pg16`，vector 0.8.6），`127.0.0.1:5433/bistro`
 - 数据量：12 角色 / 12 时间锚点 / 45 状态行 / 23 关系边 / 5 事件 / 19 表 / 3 视图
-- 模型层：离线 `mock` provider（**尚未接真实模型**）
+- 模型层：**已接真实模型 DeepSeek `deepseek-v4-flash`**（`BISTRO_LLM_PROVIDER=deepseek`）；
+  `mock` 仍保留，离线可跑通整条链路
 - 当前阶段：第 0 期完成，第 1 期未开始
 
 ---
@@ -67,9 +71,12 @@ F17/F18 标 `blocked` 的原因见下方阻塞项 B02。
 
 | ID | 阻塞内容 | 影响 | 解除条件 |
 |---|---|---|---|
-| B01 | 未接真实大模型，当前是离线 `mock` provider | 只能证明链路通，**不能证明"输出像林冲"**，F06 的内容质量无法验收 | 提供任意 OpenAI 兼容接口的 base_url + api_key |
+| ~~B01~~ | ~~未接真实大模型~~ **2026-09-15 已解除** | — | 已接入 DeepSeek `deepseek-v4-flash`，见本文件「会话日志」与 [DECISIONS.md](DECISIONS.md) |
 | B02 | 语音供应商未选型（TTS / ASR） | F17、F18 无法开工 | 确定供应商与成本区间 |
 | B03 | 未确定目标平台优先级（Web / 小程序 / App） | 影响 F19 的技术选型与工作量 | 确认先做哪个 |
+
+> B01 解除只解决了「有没有真实模型」。**「输出像不像本人」仍未验收**——
+> 需要 F21 的角色一致性评测集给结论，在那之前 F06 只能算链路通过。
 
 ### 已知问题（不阻塞当前开发）
 
@@ -91,7 +98,8 @@ F17/F18 标 `blocked` 的原因见下方阻塞项 B02。
 2. **F11 记忆层**：pgvector 已就绪，写"对话后抽取记忆 → 向量召回 → 进 prompt"的闭环，并补验证命令。
 3. **F12 用户↔角色显式关系**：把 `relationship_edges` 的 `from_kind='user'` 接进 prompt，打通"我对林冲是结义兄弟"。
 4. **F13 角色卡分层**：拆恒定层与时间线层，彻底修掉 I01。
-5. **接真实模型**（解 B01）：拿一段真实输出验证角色是否像本人，这是目前最大的未验证风险。
+5. **F21 角色一致性评测集**：真实模型已接通（DeepSeek `deepseek-v4-flash`），但「像不像本人」
+   仍无量化结论；先用每角色 30 条探针题把这条风险关掉。跑一轮真实模型的命令见 README。
 
 ---
 
@@ -111,3 +119,22 @@ F17/F18 标 `blocked` 的原因见下方阻塞项 B02。
 - 首次在真实 pgvector 上验证 `schema.sql`：vector 0.8.6，两个 hnsw 索引建成，1024 维约束生效。此前"未装 pgvector"的验证缺口关闭。
 - 新增工程管理骨架：`AGENTS.md`、`PROGRESS.md`、`DECISIONS.md`、`Makefile`、`db/CONSTRAINTS.md`。
 - 未做：上述文件尚未提交（工作区有未提交改动）。
+
+### 2026-09-15 · 接入真实模型 DeepSeek（解 B01）
+
+- 模型层落地：`.env` 配 `BISTRO_LLM_PROVIDER=deepseek`、`BISTRO_LLM_BASE_URL=https://api.deepseek.com/v1`、
+  `BISTRO_LLM_MODEL=deepseek-v4-flash`；密钥只写在 `.env`（已被 `.gitignore` 忽略）。
+- `app/providers/` 增加 `deepseek` 名字（与 `openai_compat` 共用同一类，只差默认地址），
+  provider 名写错改为直接报错，不再静默退回 `mock`。
+- 实测 DeepSeek：`/models` 只列 `deepseek-flash` / `deepseek-v4-pro`，`deepseek-v4-flash` 是可用别名
+  （响应回落成 `deepseek-flash`）；流式响应分 `reasoning_content`（思考）与 `content`（正文）两个字段，
+  解析处只取正文并钉了测试。
+- 推理模型的取舍：默认 `BISTRO_LLM_THINKING=auto`，关掉思考（`disabled`）首字延迟实测从 2.54s 降到 1.80s
+  （同一句话、第十回林冲，打真实服务）；细节与风险写进 DECISIONS.md。
+- 新增验证手段：`scripts/check_llm.py`（真实模型端到端冒烟，支持 `--http` 打真实服务测首字延迟）、
+  `scripts/check_secrets.sh` + `make secrets`（密钥泄漏检查，已并入 `make check`）、
+  `tests/test_provider_config.py`（7 项，provider 选择 / 默认地址 / thinking 开关 / SSE 解析）。
+- 验收：`make check` 通过（测试 16/16、数据冒烟 7/7、密钥检查通过）；
+  `scripts/check_llm.py` 真实调用通过，第十回林冲站得住人设
+  （「林某是个刺配的配军，往沧州去。掌柜的，这雪夜开门，可有热酒卖？」）。
+- 未做：本轮改动尚未提交；工作区另有上一轮的文档改动一并待提交。

@@ -46,8 +46,41 @@ make check      # 一致状态验证（测试 + 数据冒烟测试）
 ```
 
 默认使用离线 `mock` provider，不需要任何 API Key 就能把整条链路跑通。
-接真实模型时复制 `.env.example` 为 `.env`，把 `BISTRO_LLM_PROVIDER` 改成
-`openai_compat` 并填上 `BISTRO_LLM_BASE_URL` / `BISTRO_LLM_API_KEY`。
+
+### 接真实模型（当前用 DeepSeek）
+
+配置只写在 `.env` 里（`.env` 已被 `.gitignore` 忽略，不进版本库）：
+
+```ini
+BISTRO_LLM_PROVIDER=deepseek
+BISTRO_LLM_BASE_URL=https://api.deepseek.com/v1   # 留空则用 DeepSeek 官方默认地址
+BISTRO_LLM_API_KEY=                               # 在这里填密钥，别填进 .env.example
+BISTRO_LLM_MODEL=deepseek-v4-flash
+BISTRO_LLM_THINKING=auto                          # auto | disabled，见下
+```
+
+`deepseek` 与 `openai_compat` 都是 OpenAI 兼容协议，区别只是默认地址；
+换供应商就是改 `BISTRO_LLM_PROVIDER` 一行。provider 名写错会直接报错，
+不会静默退回 mock——否则「以为接了真实模型、其实在跟 mock 说话」很难发现。
+
+验证真实模型是否接通：
+
+```bash
+.venv/bin/python scripts/check_llm.py                  # 进程内直连：验证整条链路出正文
+make run                                               # 另开一个终端起服务
+.venv/bin/python scripts/check_llm.py --http http://127.0.0.1:8000   # 首字延迟才准
+```
+
+`deepseek-v4-flash` 是推理模型，默认会先流式输出一大段思考
+（`reasoning_content`），正文要等思考结束才出现，首字延迟明显变长。
+`BISTRO_LLM_THINKING=disabled` 可以关掉思考换更快的响应，实测同一句话
+首字延迟从 2.5s 降到 1.8s（短句；长回复差距更大）。默认保持 `auto`。
+
+### 密钥纪律
+
+- 密钥只写在 `.env`，`.env.example` 里永远留空，README / 日志 / 提交信息里不出现密钥。
+- `make check` 会顺带跑 `make secrets`：确认 `.env` 仍被忽略、被追踪的文件与提交历史里都没有密钥形状的字符串。
+- 万一密钥进过提交：先撤销这把 key，再改写历史（`git filter-repo` / BFG），仅删文件是不够的。
 
 > **Python 版本说明**：本机 homebrew 的 python@3.11 / 3.12 因为 `libexpat`
 > 链接失效无法创建虚拟环境（`Symbol not found: _XML_SetAllocTrackerActivationThreshold`），

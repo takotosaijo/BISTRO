@@ -33,9 +33,16 @@ make run       # 起服务 http://127.0.0.1:8000
 **没跑过 `make check`，不许把任何功能项标记为 passing。**
 
 ```bash
-make check     # 一致状态验证（测试 + 种子数据冒烟测试）
+make check     # 一致状态验证（测试 + 种子数据冒烟测试 + 密钥泄漏检查）
 make test      # 只跑测试
 make status    # 打印 PROGRESS.md 的快照段
+```
+
+接真实模型后另有一项验证（需要网络，会真实消耗额度）：
+
+```bash
+.venv/bin/python scripts/check_llm.py            # 进程内直连，验证链路出正文
+.venv/bin/python scripts/check_llm.py --http http://127.0.0.1:8000   # 打真实服务，首字延迟才准
 ```
 
 ## 事实来源地图

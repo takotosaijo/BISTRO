@@ -81,3 +81,44 @@
   仓库外的东西（聊天记录、脑子里的约定）对 agent 等于不存在。
 - **否决**：把所有规则堆进一个巨大的 AGENTS.md（第 4 讲：单一巨型指令文件必然失败，按要求分层放）。
 - **约束**：功能项状态只能由验证命令驱动；没跑 `make check` 不许标 `passing`。
+
+## 2026-09-15 · 真实模型选 DeepSeek（`deepseek-v4-flash`），走 OpenAI 兼容协议族
+
+- **决策**：`BISTRO_LLM_PROVIDER=deepseek`，`base_url` 默认 `https://api.deepseek.com/v1`，
+  模型 `deepseek-v4-flash`；它和 `openai_compat` 共用同一个 provider 类，只是默认地址不同。
+- **原因**：DeepSeek 完全兼容 OpenAI 的 `/chat/completions` + SSE，现有 `openai_compat`
+  一行不用改就能接；单独加一个 `deepseek` 名字是为了让 `.env` 自解释（不用手填 base_url），
+  也让落库的 `model` 字段能区分是谁生成的（`deepseek:deepseek-v4-flash`）。
+- **实测**（2026-09-15，key 已写入本地 `.env`，不入库）：
+  - `/models` 只返回 `deepseek-flash` 和 `deepseek-v4-pro`；`deepseek-v4-flash` 是被接受的别名，
+    响应里的 `model` 会回落成 `deepseek-flash`。别名哪天失效，改用 `deepseek-flash` 即可。
+  - 流式响应里 `delta.content` 与 `delta.reasoning_content` 是两个字段，思考过程不能混进角色回复，
+    解析处已按此写并钉了测试（`tests/test_provider_config.py`）。
+- **否决**：给 DeepSeek 单独写一个 provider 类（协议相同，纯属重复）；沿用「provider 名写错就
+  静默退回 mock」的旧行为（那会让「以为接了真实模型」的事故只能靠回复语气察觉，现在改为直接报错）。
+- **约束**：换模型/换供应商只改 `.env`；不要在代码里写死模型名。
+
+## 2026-09-15 · 推理模型默认思考，但保留 `BISTRO_LLM_THINKING` 开关
+
+- **决策**：默认 `BISTRO_LLM_THINKING=auto`（模型自己决定是否思考）；需要低延迟时改成 `disabled`。
+- **原因**：`deepseek-v4-flash` 是推理模型，会先流式吐一整段 `reasoning_content` 才吐正文。
+  角色扮演要「像本人」，思考通常有帮助，所以默认不关；但 F18 要求 TTS 首句 ≤1.5 秒，
+  真做语音时这个开关是必须有的旋钮。
+- **实测**（同一个用户问题、第十回林冲，打真实服务 `/messages/stream`）：
+  `auto` 首字 2.54s / 总 2.68s；`disabled` 首字 1.80s / 总 1.82s。
+  单条短回复的差距约 0.7s；长回复思考 token 更多，差距会拉大（API 层实测过一条
+  单句回复花掉 135 个 reasoning token）。
+- **否决**：默认就关掉思考（牺牲角色质量换延迟，且这是产品决策不该由实现悄悄定）。
+- **约束**：没有 `max_tokens` 保护时，思考可能吃掉整段输出预算并吐出空正文
+  （API 层实测：`max_tokens=40` 时正文为空、`finish_reason=length`）。
+  `chat_once` 会把空回复兜底成「……」，出现这种情况先查思考是否没关。
+
+## 2026-09-15 · 密钥只进 .env，且用 `make secrets` 兜底
+
+- **决策**：API Key 只写在 `.env`；`.env.example` 留空占位；`make check` 顺带跑
+  `scripts/check_secrets.sh`（检查 `.env` 仍被忽略、被追踪文件与提交历史里无密钥）。
+- **原因**：密钥一旦进了提交，删文件也还在历史里，push 出去就等于泄露；靠人记着
+  「别提交」不如让它可验证。
+- **否决**：把密钥放进 `settings.py` 或文档示例（会被复制到各处）；只依赖 `.gitignore`
+  （防不住 `git add -f` 和手滑写进别的文件）。
+- **约束**：密钥泄漏检查失败时 `make check` 直接失败，不许绕过；真的泄漏过要撤销 key 并改写历史。

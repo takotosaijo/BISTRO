@@ -10,7 +10,7 @@ DB_URL   ?= postgresql://postgres:123456@127.0.0.1:5433/bistro
 BISTRO_DATABASE_URL ?= $(DB_URL)
 export BISTRO_DATABASE_URL
 
-.PHONY: help setup db db-reset demo run test check status
+.PHONY: help setup db db-reset demo run test check secrets status
 
 help: ## 列出所有可用命令
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  \033[36m%-9s\033[0m %s\n", $$1, $$2}'
@@ -34,8 +34,11 @@ run: ## 起服务 http://127.0.0.1:8000
 test: ## 跑测试（需要数据库在跑）
 	BISTRO_TEST_DATABASE_URL=$(DB_URL) $(PY) -m pytest -q
 
-check: test ## 一致状态验证：测试 + 数据冒烟测试
+check: test secrets ## 一致状态验证：测试 + 数据冒烟测试 + 密钥泄漏检查
 	$(PSQL) "$(DB_URL)" -q -v ON_ERROR_STOP=1 -f db/tests/verify_seed.sql
+
+secrets: ## 检查 API Key 是否泄漏到被追踪的文件或提交历史
+	./scripts/check_secrets.sh
 
 status: ## 打印 PROGRESS.md 的快照段
 	@sed -n '/^## 快照/,/^---$$/p' PROGRESS.md

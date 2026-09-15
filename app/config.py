@@ -12,13 +12,19 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql://postgres@127.0.0.1:5432/bistro"
 
-    # mock 无需任何外部依赖即可跑通链路；openai_compat 适用于任何 OpenAI 兼容接口
+    # mock 无需任何外部依赖即可跑通链路；
+    # deepseek / openai_compat 都是 OpenAI 兼容接口，只差默认 base_url
     llm_provider: str = "mock"
-    llm_base_url: str = "https://api.openai.com/v1"
+    # 留空表示用该 provider 的官方地址（见 app/providers/__init__.py）
+    llm_base_url: Optional[str] = None
     llm_api_key: Optional[str] = None
     llm_model: str = "gpt-4o-mini"
     llm_temperature: float = 0.85
     llm_timeout_seconds: float = 60.0
+    # 推理模型（deepseek-v4-flash / v4-pro）是否允许先思考：
+    #   auto     交给模型自己决定（默认，角色质量优先）
+    #   disabled 关掉思考，首字延迟显著下降（角色扮演的对话体验优先）
+    llm_thinking: str = "auto"
 
     # 送进 prompt 的最近消息条数（不含本轮）
     max_history_messages: int = 24
