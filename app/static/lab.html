@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>水浒 · 角色对话试验台</title>
+<style>
+  :root {
+    --paper: #f6f1e7; --ink: #2b2620; --muted: #7a6f60;
+    --line: #ddd2bf; --accent: #8c2f21; --accent-soft: #f0e0d8; --card: #fffdf8;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--paper); color: var(--ink);
+         font: 15px/1.6 "Songti SC", "Noto Serif CJK SC", Georgia, serif;
+         display: flex; flex-direction: column; }
+  header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+           padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--card);
+           flex: 0 0 auto; }
+  header h1 { font-size: 17px; margin: 0; letter-spacing: .04em; }
+  header .tip { color: var(--muted); font-size: 13px; }
+  #provider { margin-left: auto; font-size: 12px; color: var(--muted); }
+  /* 用 flex 撑满剩余高度，别写 calc(100vh - 53px) 这种魔数：header 实际高 56px，写 53 就会被切掉 */
+  main { display: grid; grid-template-columns: 320px 1fr; flex: 1 1 auto; min-height: 0; }
+  aside { border-right: 1px solid var(--line); padding: 16px; overflow-y: auto; min-height: 0; }
+  section { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  h2 { font-size: 13px; color: var(--muted); font-weight: 600; margin: 0 0 8px; letter-spacing: .08em; }
+  .block { margin-bottom: 22px; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .anchor-name { font-size: 14px; margin-top: 4px; }
+  .anchor-name b { color: var(--accent); }
+  .row { display: flex; gap: 6px; margin-top: 6px; }
+  input[type=text] { width: 100%; padding: 6px 8px; border: 1px solid var(--line);
+                     background: var(--card); color: var(--ink); font: inherit; font-size: 13px; }
+  button { font: inherit; font-size: 13px; padding: 6px 10px; cursor: pointer;
+           border: 1px solid var(--line); background: var(--card); color: var(--ink); }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .chars { display: flex; flex-direction: column; gap: 6px; }
+  .char { text-align: left; padding: 7px 10px; border: 1px solid var(--line);
+          background: var(--card); cursor: pointer; }
+  .char.active { border-color: var(--accent); background: var(--accent-soft); }
+  .char .nm { font-size: 14px; }
+  .char .st { font-size: 12px; color: var(--muted); }
+  .char.gone { opacity: .45; cursor: not-allowed; }
+  .badge { font-size: 11px; padding: 1px 6px; border: 1px solid var(--line);
+           color: var(--muted); margin-left: 6px; }
+  .badge.here { color: var(--accent); border-color: var(--accent); }
+  .chat-head { display: flex; align-items: center; gap: 10px; padding: 12px 18px;
+               border-bottom: 1px solid var(--line); background: var(--card); }
+  .chat-head .who { font-size: 15px; }
+  .chat-head .where { font-size: 12px; color: var(--muted); }
+  #log { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 18px;
+         display: flex; flex-direction: column; gap: 12px; }
+  .msg { max-width: 72%; padding: 9px 13px; border: 1px solid var(--line);
+         background: var(--card); white-space: pre-wrap; }
+  .msg.user { align-self: flex-end; background: var(--accent-soft); border-color: #e3c5b8; }
+  .msg.sys { align-self: center; color: var(--muted); font-size: 13px;
+             border: none; background: none; max-width: 90%; text-align: center; }
+  .sender { font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+  .composer { display: flex; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--line); background: var(--card); }
+  .composer input { font-size: 15px; }
+  details.prompt { border-top: 1px solid var(--line); background: var(--card); flex: 0 0 auto; }
+  details.prompt summary { padding: 10px 18px; cursor: pointer; font-size: 13px; color: var(--muted); }
+  details.prompt pre { margin: 0; padding: 0 18px 16px; max-height: 34vh; overflow: auto;
+                       font: 12px/1.55 ui-monospace, Menlo, monospace; white-space: pre-wrap; color: #3b352c; }
+  .err { color: var(--accent); font-size: 13px; padding: 0 18px 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>水浒 · 角色对话试验台</h1>
+  <span class="tip">拨动章回滑块，再问同一句话——看他变成谁</span>
+  <span id="provider"></span>
+</header>
+
+<main>
+  <aside>
+    <div class="block">
+      <h2>时间线</h2>
+      <input id="slider" type="range" min="0" max="11" step="1" value="0">
+      <div class="anchor-name" id="anchorName">加载中…</div>
+    </div>
+
+    <div class="block">
+      <h2>我在这个故事里是谁</h2>
+      <input id="personaName" type="text" placeholder="名字">
+      <div class="row">
+        <input id="personaIdentity" type="text" placeholder="身份">
+        <button id="savePersona">保存</button>
+      </div>
+    </div>
+
+    <div class="block">
+      <h2>选个角色</h2>
+      <div class="chars" id="chars"></div>
+    </div>
+  </aside>
+
+  <section>
+    <div class="chat-head">
+      <span class="who" id="who">还没有选中角色</span>
+      <span class="where" id="where"></span>
+      <button id="reset" style="margin-left:auto" disabled>新开一个会话</button>
+    </div>
+    <div id="log"></div>
+    <div class="composer">
+      <input id="text" type="text" placeholder="说点什么…" disabled>
+      <button id="send" disabled>发送</button>
+    </div>
+    <div class="err" id="err"></div>
+    <details class="prompt">
+      <summary>看此刻发给模型的原样 prompt（调角色最有用的一个东西）</summary>
+      <pre id="prompt">选中角色后显示。</pre>
+    </details>
+  </section>
+</main>
+
+<script>
+const WORK = "shuihu-100";
+const state = { userId: 0, anchors: [], characters: [], index: 0, slug: null, session: 0, busy: false };
+const $ = (id) => document.getElementById(id);
+
+function fail(message) { $("err").textContent = message || ""; }
+
+async function api(path, options) {
+  const response = await fetch(path, Object.assign({ headers: { "Content-Type": "application/json" } }, options));
+  if (!response.ok) {
+    let detail = String(response.status);
+    try { const body = await response.json(); detail = body.message || body.detail || detail; } catch (e) {}
+    throw new Error(detail);
+  }
+  return response.json();
+}
+
+function post(path, body) {
+  return api(path, { method: "POST", body: JSON.stringify(body) });
+}
+
+async function init() {
+  fail("");
+  const health = await api("/api/health");
+  $("provider").textContent = health.llm_provider + " / " + health.llm_model;
+
+  // 固定 external_id：刷新页面不丢人设与时间线
+  const user = await post("/api/users", { external_id: "lab-ui", display_name: "试验台用户" });
+  state.userId = user.id;
+
+  state.anchors = await api("/api/works/" + WORK + "/anchors");
+  $("slider").max = String(state.anchors.length - 1);
+
+  const timeline = await api("/api/users/" + state.userId + "/timeline?work_slug=" + WORK);
+  const current = timeline.current;
+  state.index = Math.max(0, state.anchors.findIndex((a) => current && a.id === current.id));
+  $("slider").value = String(state.index);
+
+  $("personaName").value = "张三";
+  $("personaIdentity").value = "东京城里开酒铺的掌柜";
+  renderAnchor();
+  await loadCharacters();
+}
+
+function renderAnchor() {
+  const anchor = state.anchors[state.index];
+  if (!anchor) { $("anchorName").textContent = "作品没有时间锚点"; return; }
+  $("anchorName").innerHTML = "<b>" + anchor.chapter_label + "</b>《" + anchor.name + "》";
+}
+
+async function loadCharacters() {
+  state.characters = await api("/api/works/" + WORK + "/characters?user_id=" + state.userId);
+  const box = $("chars");
+  box.innerHTML = "";
+  state.characters.forEach((c) => {
+    const card = document.createElement("div");
+    const selectable = c.selectable !== false;
+    card.className = "char" + (c.slug === state.slug ? " active" : "") + (selectable ? "" : " gone");
+    const st = c.state_at_anchor || {};
+    const badge = st.availability === "introduced"
+      ? '<span class="badge here">此刻在场</span>'
+      : (st.availability === "deceased" ? '<span class="badge">已不在人世</span>'
+                                         : '<span class="badge">尚未登场</span>');
+    card.innerHTML = '<div class="nm">' + c.name + badge + '</div>'
+      + '<div class="st">' + (st.status_title || st.location || "—") + '</div>';
+    if (selectable) card.onclick = () => openCharacter(c.slug).catch((e) => fail(e.message));
+    box.appendChild(card);
+  });
+  if (state.slug) {
+    const me = state.characters.find((c) => c.slug === state.slug);
+    if (me) renderHeader(me);
+  }
+}
+
+function renderHeader(character) {
+  const st = character.state_at_anchor || {};
+  $("who").textContent = character.name;
+  $("where").textContent = [st.status_title, st.location].filter(Boolean).join(" · ");
+}
+
+async function openCharacter(slug, forceNew) {
+  state.slug = slug;
+  const character = state.characters.find((c) => c.slug === slug);
+  renderHeader(character);
+  await loadCharacters();
+
+  // 复用同一个会话：拨动时间线时才能看出「同一个他，换了处境」
+  const sessions = await api("/api/sessions?user_id=" + state.userId + "&work_slug=" + WORK);
+  const existing = forceNew ? null
+    : sessions.find((s) => s.session_type === "direct" && s.title === character.name);
+  state.session = existing
+    ? existing.id
+    : (await post("/api/sessions", {
+        user_id: state.userId, work_slug: WORK, session_type: "direct", character_slugs: [slug],
+      })).id;
+
+  $("text").disabled = false;
+  $("send").disabled = false;
+  $("reset").disabled = false;
+  await loadHistory();
+  await refreshPrompt();
+}
+
+async function loadHistory() {
+  const messages = await api("/api/sessions/" + state.session + "/messages?limit=50");
+  $("log").innerHTML = "";
+  if (!messages.length) {
+    addMessage("sys", "新会话。说句话试试；拨动时间线后回到这里，他换一套处境。");
+  }
+  messages.forEach((m) => {
+    const mine = m.sender_kind === "user";
+    const name = mine ? "我" : ($("who").textContent || "他");
+    addMessage(mine ? "user" : "them", m.content, name);
+  });
+}
+
+function addMessage(kind, content, sender) {
+  const box = document.createElement("div");
+  box.className = "msg " + kind;
+  if (sender) {
+    const label = document.createElement("div");
+    label.className = "sender";
+    label.textContent = sender;
+    box.appendChild(label);
+  }
+  const body = document.createElement("div");
+  body.textContent = content;
+  box.appendChild(body);
+  $("log").appendChild(box);
+  $("log").scrollTop = $("log").scrollHeight;
+  return body;
+}
+
+async function send() {
+  const text = $("text").value.trim();
+  if (!text || state.busy) return;
+  state.busy = true;
+  $("send").disabled = true;
+  $("text").value = "";
+  fail("");
+  addMessage("user", text, "我");
+  const body = addMessage("them", "…", $("who").textContent);
+
+  try {
+    const response = await fetch("/api/sessions/" + state.session + "/messages/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: text }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.message || response.status);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let event = "";
+    let first = true;
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      buffer += decoder.decode(chunk.value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop();
+      lines.forEach((line) => {
+        if (line.startsWith("event: ")) { event = line.slice(7).trim(); return; }
+        if (!line.startsWith("data: ")) return;
+        const payload = JSON.parse(line.slice(6));
+        if (event === "delta") {
+          if (first) { body.textContent = ""; first = false; }
+          body.textContent += payload.text;
+          $("log").scrollTop = $("log").scrollHeight;
+        } else if (event === "error") {
+          fail(payload.message || "生成出错");
+        }
+      });
+    }
+    if (first) body.textContent = "（没说出话来）";
+  } catch (e) {
+    body.remove();
+    fail(e.message);
+  } finally {
+    state.busy = false;
+    $("send").disabled = false;
+    await refreshPrompt().catch(() => {});
+  }
+}
+
+async function refreshPrompt() {
+  if (!state.session) return;
+  const preview = await api("/api/sessions/" + state.session + "/prompt-preview");
+  $("prompt").textContent = preview.system_prompt;
+}
+
+async function setTimeline(index) {
+  state.index = index;
+  renderAnchor();
+  const anchor = state.anchors[index];
+  await api("/api/users/" + state.userId + "/timeline", {
+    method: "PUT",
+    body: JSON.stringify({ work_slug: WORK, anchor_seq: anchor.seq }),
+  });
+  await loadCharacters();
+  await refreshPrompt().catch(() => {});
+}
+
+async function savePersona() {
+  await api("/api/users/" + state.userId + "/persona", {
+    method: "PUT",
+    body: JSON.stringify({
+      work_slug: WORK,
+      name: $("personaName").value || "张三",
+      identity: $("personaIdentity").value || "来历不明的人",
+    }),
+  });
+  fail("");
+  addMessage("sys", "人设已保存；再发一句话，看 prompt 里的「你与在场之人」变了没有。");
+  await refreshPrompt().catch(() => {});
+}
+
+$("slider").addEventListener("change", () => setTimeline(Number($("slider").value)).catch((e) => fail(e.message)));
+$("savePersona").addEventListener("click", () => savePersona().catch((e) => fail(e.message)));
+$("send").addEventListener("click", send);
+$("text").addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+$("reset").addEventListener("click", () => {
+  if (state.slug) openCharacter(state.slug, true).catch((e) => fail(e.message));
+});
+
+init().catch((e) => fail("初始化失败：" + e.message));
+</script>
+</body>
+</html>

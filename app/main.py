@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from fastapi import FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from app import db
 from app import repository as repo
@@ -22,6 +23,8 @@ from app.schemas import (
     SetTimelineRequest,
 )
 from app.services import chat as chat_service
+
+LAB_PAGE = Path(__file__).resolve().parent / "static" / "lab.html"
 
 
 @asynccontextmanager
@@ -65,6 +68,18 @@ async def health() -> Dict[str, Any]:
         "llm_provider": settings.llm_provider,
         "llm_model": settings.llm_model,
     }
+
+
+@app.get("/", include_in_schema=False)
+async def lab_page() -> FileResponse:
+    """试验台页面：单文件 HTML，服务直接托管。
+
+    目的是把「拨时间线 → 同一个人换一套处境」变成可以用手拨的东西，
+    而不是只能靠 /docs 和 curl 感受。不是产品前端（F19 正式形态还没定），
+    所以不引构建工具、不做路由，随手可扔。
+    """
+
+    return FileResponse(LAB_PAGE, media_type="text/html")
 
 
 @app.get("/api/works")
