@@ -45,6 +45,10 @@ make status    # 打印 PROGRESS.md 的快照段
 .venv/bin/python scripts/check_llm.py --http http://127.0.0.1:8002   # 打真实服务，首字延迟才准
 ```
 
+改了 prompt（`app/prompt.py`）或角色卡（`db/seed.sql`）之后，除 `make check` 外还要跑一次
+`make eval`：探针会替你检查「林冲还是不是林冲」——出戏、提前知道未来、口吻串位都会被挑出来。
+（要网络、消耗额度，所以不进 `make check`。）
+
 ## 事实来源地图
 
 | 问题 | 去哪里看 |

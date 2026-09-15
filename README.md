@@ -76,6 +76,18 @@ make run                                               # 另开一个终端起�
 `BISTRO_LLM_THINKING=disabled` 可以关掉思考换更快的响应，实测同一句话
 首字延迟从 2.5s 降到 1.8s（短句；长回复差距更大）。默认保持 `auto`。
 
+### 角色一致性评测（改了 prompt 就跑）
+
+```bash
+make eval                                                    # 全部探针（真实模型，消耗额度）
+.venv/bin/python scripts/eval_characters.py --character lin-chong
+```
+
+探针集在 [evals/character_probes.json](evals/character_probes.json)，判定逻辑在
+[scripts/eval_characters.py](scripts/eval_characters.py)：先查送给模型的 prompt 有没有接上
+时间线（确定性判定），再查回复有没有出戏、提前知道未来、口吻串到别人身上。
+它**不判**「像不像本人」——那是人看的。
+
 ### 密钥纪律
 
 - 密钥只写在 `.env`，`.env.example` 里永远留空，README / 日志 / 提交信息里不出现密钥。
