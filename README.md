@@ -4,6 +4,9 @@
 
 与「复现剧情」不同，本产品的核心是**世界状态切片**：用户把时间线拨到某一回，系统据此决定「此刻谁认识谁、谁在做什么、谁只知道哪些事」，而对话本身永远发生在当下。
 
+> **新会话请先读 [AGENTS.md](AGENTS.md)**：那里是项目入口（怎么跑、怎么验证、硬约束、
+> 上下班流程）。当前进度看 [PROGRESS.md](PROGRESS.md)，历史决策看 [DECISIONS.md](DECISIONS.md)。
+
 ## 已确认的产品决策
 
 | 项 | 决策 |
@@ -19,9 +22,14 @@
 
 | 路径 | 内容 |
 |---|---|
+| [AGENTS.md](AGENTS.md) | 项目入口：怎么跑、怎么验证、硬约束、会话上下班流程 |
+| [PROGRESS.md](PROGRESS.md) | 状态持久化：快照、功能清单（含验证命令）、已知问题、下一步、会话日志 |
+| [DECISIONS.md](DECISIONS.md) | 决策日志：为什么这么选、否决了什么 |
+| [Makefile](Makefile) | 标准命令：`make setup / db / demo / run / test / check` |
 | [docs/PLAN.md](docs/PLAN.md) | 完整开发方案：产品形态、时间线模型、关系覆盖规则、群聊调度、语音链路、分期计划 |
 | [db/schema.sql](db/schema.sql) | 数据模型 DDL（PostgreSQL 15 + pgvector） |
 | [db/seed.sql](db/seed.sql) | 基础数据：12 个角色卡、12 个时间锚点、时序关系边、角色状态快照 |
+| [db/CONSTRAINTS.md](db/CONSTRAINTS.md) | 数据库模块的硬约束（改表前必读） |
 | [db/tests/verify_seed.sql](db/tests/verify_seed.sql) | 冒烟测试：时间线关系解析、用户覆盖优先级、状态填充 |
 | [app/](app/) | FastAPI 后端：对话管线、prompt 装配、模型层抽象 |
 | [scripts/](scripts/) | 建库脚本与演示数据初始化 |
@@ -30,18 +38,11 @@
 ## 快速开始
 
 ```bash
-# 1. 建库、建表、灌基础数据（没装 pgvector 会自动降级，不影响开发）
-scripts/dev_db.sh --drop
-
-# 2. 装依赖
-/opt/homebrew/opt/python@3.12/bin/python3.12 -m venv .venv   # 见下方说明
-.venv/bin/pip install -e ".[dev]"
-
-# 3. 准备一个可以直接开聊的演示环境（张三 × 林冲 × 第十回）
-.venv/bin/python scripts/bootstrap_demo.py
-
-# 4. 起服务
-.venv/bin/uvicorn app.main:app --reload
+make setup      # 建虚拟环境 + 装依赖
+make db-reset   # 建库、建表、灌基础数据、跑冒烟测试
+make demo       # 造演示数据：张三 × 林冲 × 第十回
+make run        # 起服务 http://127.0.0.1:8000
+make check      # 一致状态验证（测试 + 数据冒烟测试）
 ```
 
 默认使用离线 `mock` provider，不需要任何 API Key 就能把整条链路跑通。
@@ -71,6 +72,28 @@ scripts/dev_db.sh --drop
 
 `prompt-preview` 是调角色最有用的一个接口：改人设、改关系、拨时间线之后，
 先看它，再看回复。不看 prompt 就改模型行为，等于闭着眼睛调。
+
+## 数据库
+
+开发库用 [scripts/dev_db.sh](scripts/dev_db.sh) 创建，它会自动检测 pgvector：
+装了就用 `vector(1024)` 列与 hnsw 索引，没装就把向量列降级成 jsonb。
+
+当前实际使用的是 Docker 容器 `mypg`（`pgvector/pgvector:pg16`，已装 vector 0.8.6），
+连接串写在 `.env` 的 `BISTRO_DATABASE_URL`，即 `127.0.0.1:5433`。
+
+> **为什么容器映射到 5433**：homebrew 的 PostgreSQL 15 占用了 `127.0.0.1:5432`，
+Docker 的端口转发只能绑到通配地址，回环访问 `127.0.0.1:5432` 会连到 homebrew 那个库
+（超级用户 `xiaobing`）而不是容器。所以容器改映射到 5433，两边互不干扰。
+
+容器的启动命令（数据在卷 `37d4086188b0…` 里，重建时必须显式挂回）：
+
+```bash
+docker run -d --name mypg \
+  -e POSTGRES_PASSWORD=123456 \
+  -p 5433:5432 \
+  -v 37d4086188b086c57a3bd067e3c3074907099f3c4e20bd39f06da7a8351d8e6c:/var/lib/postgresql/data \
+  pgvector/pgvector:pg16
+```
 
 ## 测试
 
