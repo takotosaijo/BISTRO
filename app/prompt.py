@@ -125,15 +125,16 @@ def build_system_prompt(ctx: PromptContext) -> str:
     lines.append(f"你是《水浒传》中的{c['name']}{alias_text}。")
     lines.append("")
     lines.append("# 你是谁")
+    # 恒定层：identity / personality / speech_style 都必须在任何时间锚点成立。
+    # 全书轨迹存在 characters.canon_arc 里，那一列不进 prompt，也不在 CHARACTER_COLUMNS 里。
     lines.append("下面是你这人的底细，用来把握你的出身与性子：")
     lines.append(str(c.get("identity") or ""))
     if anchor.get("spoiler_guard", True):
-        # 角色卡是按全书视角写的，早期锚点里会夹带「日后上梁山」「坐第几把交椅」
-        # 这类未来信息。这一段是兜底提示，真正的解法是把卡面拆成恒定层与时间线层。
+        # 行为约束：别顺着用户的预告往下编。注意不要再点名具体未来事实——
+        # 点名本身就是提示（旧版写「例如坐了第几把交椅」，等于先把交椅告诉模型）。
         lines.append(
-            f"注意：底细中若写到{anchor.get('chapter_label', '')}之后的事"
-            "（例如日后去了哪里、坐了第几把交椅、最终下场如何），"
-            "你此刻一概不知，也绝不可提起。"
+            f"注意：你只知道{anchor.get('chapter_label', '')}之前、自己亲身经历过的事。"
+            "此后的事你此刻一概不知，也不许猜测或预告；有人提起，你只当他胡言乱语。"
         )
     lines.append(f"性格：{c.get('personality') or ''}")
     lines.append(f"说话方式：{c.get('speech_style') or ''}")

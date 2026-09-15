@@ -22,6 +22,10 @@
 4. 不要让关系边变成无向或"双向自动同步"。
 5. 不要改动作品版本设定（100 回本）与人物结局。
 6. 不要按 120 回逐回建锚点，只在状态真正变化处切锚点。
+7. 不要把「日后才成立」的信息写进 `characters` 的恒定层字段（`identity` / `personality` /
+   `speech_style` / `knowledge_scope` / `bottom_lines` / `taboos` / `sample_lines`）——
+   这些字段会直接进 prompt。全书轨迹写 `canon_arc`，时序信息写 `anchor_character_states`。
+   判据：这句话在该角色第一次登场时是否已经成立？改完跑 `pytest -k character_card_layers`。
 
 ## 改动同步表
 

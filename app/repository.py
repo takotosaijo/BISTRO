@@ -199,6 +199,8 @@ CHARACTER_COLUMNS = """
   identity, personality, speech_style, knowledge_scope, bottom_lines,
   taboos, greeting, sample_lines, card_version, is_playable
 """
+# 注意：canon_arc（全书轨迹，含剧透）**故意不在这里**。应用的任何读路径都拿不到它，
+# 想用它的只有作者与评测脚本，它们自己写 SQL。
 
 
 async def list_characters(conn: asyncpg.Connection, work_id: int) -> List[Dict[str, Any]]:

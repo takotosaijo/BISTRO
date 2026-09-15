@@ -132,3 +132,31 @@
 - **否决**：改 `app/main.py` 里的端口（端口属于启动方式，不该写进应用代码）；
   让使用者每次自己加 `--port`（迟早有人忘）。
 - **约束**：新增文档/脚本里引用本项目的地址一律用 8002；换端口只改 `Makefile` 的 `PORT`。
+
+## 2026-09-15 · 角色卡分层：恒定层进 prompt，全书轨迹进 canon_arc
+
+- **决策**：`characters.identity` / `personality` / `speech_style` / `knowledge_scope` /
+  `bottom_lines` / `taboos` / `sample_lines` 是**恒定层**，判据是「这句话在角色第一次登场时
+  是否已经成立」。全书轨迹另存 `characters.canon_arc`，**永不进 prompt**（也不在
+  `CHARACTER_COLUMNS` 里，应用读不到）。时序身份只从 `anchor_character_states` 取。
+- **原因**：产品的核心承诺是「拨到第十回，林冲就只知道第十回之前的事」。角色卡按全书视角写，
+  等于把结局端到角色面前，再靠 prompt 求模型别说——那是求，不是保证。旧兜底提示还点名了
+  「坐第几把交椅」，等于先把未来告诉模型。
+- **否决**：只改 prompt 措辞（治不了数据里的剧透，换个说法照样漏）；把全书轨迹直接删掉
+  （作者写锚点状态、F21 评测都要用）；在应用层过滤（`schema.sql` 是唯一事实来源，
+  过滤逻辑放应用里迟早各写各的）。
+- **约束**：给角色卡加字段前先问「这条信息在首次登场时成立吗」，不成立就写 `canon_arc` 或锚点状态。
+  改完跑 `pytest -k character_card_layers`（12 角色 × 12 锚点全扫）。关系边同理：
+  `private_note` 会随时间生效，心里话里也不许出现还没发生的事（武松→宋江的「招安」边即为此切段）。
+
+## 2026-09-15 · 开发库的 schema 变更走临时库验证，不轻易 db-reset
+
+- **决策**：这次给 `characters` 加 `canon_arc`，没有 `make db-reset`。做法是新建临时库
+  `bistro_scratch` 从零跑 `schema.sql` + `seed.sql`，再对开发库 `ALTER TABLE ... ADD COLUMN`
+  并用临时库生成的 UPDATE 覆盖数据，最后逐字段对比两个库确认一致。
+- **原因**：`dev_db.sh` 的建表语句没有 `IF NOT EXISTS`，改 schema 只能从零重建；而
+  `make db-reset` 会连演示用户、会话、消息一起清掉——当时用户正在 8002 上开着那条会话。
+- **否决**：直接 `make db-reset`（省事，但会把别人正在看的东西删掉）；写一版带
+  `IF NOT EXISTS` 的 schema（那等于把迁移逻辑塞进 DDL 事实来源里，得不偿失）。
+- **约束**：临时库只是验证手段，`schema.sql` + `seed.sql` 始终是唯一事实来源；
+  新环境（以及将来接 CI）一律从零构建。手工同步后必须做两库逐字段对比，不能只跑测试。

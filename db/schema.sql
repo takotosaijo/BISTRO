@@ -109,7 +109,9 @@ CREATE TABLE characters (
   faction         text,                           -- '梁山' / '市井' / '官府'
   avatar_url      text,
   voice_id        text,                           -- TTS 音色标识
-  identity        text NOT NULL,                  -- 身份与世界观
+  -- ---- 恒定层：任何时间锚点都必须成立，会直接进 prompt ----
+  -- 判据：这句话在角色第一次登场时是否就已经是真的？不是，就放 canon_arc 或锚点状态里。
+  identity        text NOT NULL,                  -- 出身与本事，不含剧情走向
   personality     text NOT NULL,
   speech_style    text NOT NULL,                  -- 语言风格、口头禅、称呼习惯
   knowledge_scope text,                           -- 知识边界的额外说明
@@ -121,6 +123,11 @@ CREATE TABLE characters (
   is_playable     boolean NOT NULL DEFAULT true,
   created_at      timestamptz NOT NULL DEFAULT now(),
   updated_at      timestamptz NOT NULL DEFAULT now(),
+
+  -- 全书轨迹（含剧透）：只给作者与评测看，**禁止进 prompt**。
+  -- 以前这段内容写在 identity 里，于是第二回的林冲就知道自己将来会坐第六把交椅（I01）。
+  canon_arc       text,
+
   UNIQUE (work_id, slug)
 );
 

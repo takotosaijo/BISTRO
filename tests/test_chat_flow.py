@@ -31,8 +31,12 @@ async def test_prompt_reflects_anchor_and_character_state(client: AsyncClient) -
     assert "张三" in prompt
     # 知识边界必须写死
     assert "你只经历过第十回之前的事" in prompt
-    # 角色卡里的「第六把交椅」属于未来信息，必须有兜底提示压住
+    # 底细只给恒定层，行为约束负责「别顺着用户的预告往下编」
     assert "你此刻一概不知" in prompt
+    # 而未来信息本身就不该出现——不是靠提示压着，是压根没进 prompt（F13）
+    assert "第六把交椅" not in prompt
+    assert "五虎将" not in prompt
+    assert "招安" not in prompt
 
 
 async def test_timeline_advance_rewrites_prompt(client: AsyncClient) -> None:
