@@ -4,6 +4,8 @@ VENV     := .venv
 PY       := $(VENV)/bin/python
 UVICORN  := $(VENV)/bin/uvicorn
 PSQL     ?= psql
+# 开发服务端口。8000 常被别的进程占用，默认走 8002；临时改：make run PORT=8000
+PORT     ?= 8002
 
 # 数据库连接串。默认对应 Docker 容器 mypg 映射出来的 5433 端口。
 DB_URL   ?= postgresql://postgres:123456@127.0.0.1:5433/bistro
@@ -28,8 +30,8 @@ db-reset: ## 删库重建，会清空数据
 demo: ## 造演示数据：张三 × 林冲 × 第十回
 	$(PY) scripts/bootstrap_demo.py
 
-run: ## 起服务 http://127.0.0.1:8000
-	$(UVICORN) app.main:app --reload
+run: ## 起服务 http://127.0.0.1:8002（改端口：make run PORT=xxxx）
+	$(UVICORN) app.main:app --reload --port $(PORT)
 
 test: ## 跑测试（需要数据库在跑）
 	BISTRO_TEST_DATABASE_URL=$(DB_URL) $(PY) -m pytest -q

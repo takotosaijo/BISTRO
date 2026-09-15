@@ -22,7 +22,7 @@
 make setup     # 建虚拟环境 + 装依赖（已做过可跳过）
 make db        # 建库 / 建表 / 灌基础数据
 make demo      # 造演示数据：张三 × 林冲 × 第十回
-make run       # 起服务 http://127.0.0.1:8000
+make run       # 起服务 http://127.0.0.1:8002
 ```
 
 接口一览、数据库与容器的来龙去脉见 [README.md](README.md)。
@@ -42,7 +42,7 @@ make status    # 打印 PROGRESS.md 的快照段
 
 ```bash
 .venv/bin/python scripts/check_llm.py            # 进程内直连，验证链路出正文
-.venv/bin/python scripts/check_llm.py --http http://127.0.0.1:8000   # 打真实服务，首字延迟才准
+.venv/bin/python scripts/check_llm.py --http http://127.0.0.1:8002   # 打真实服务，首字延迟才准
 ```
 
 ## 事实来源地图

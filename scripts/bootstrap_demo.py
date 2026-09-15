@@ -86,11 +86,11 @@ async def main() -> None:
         print(f"会话 id    = {session_id}（{action}）")
         print()
         print("看这个会话此刻的 system prompt：")
-        print(f"  curl -s localhost:8000/api/sessions/{session_id}/prompt-preview | python3 -m json.tool")
+        print(f"  curl -s localhost:8002/api/sessions/{session_id}/prompt-preview | python3 -m json.tool")
         print()
         print("说一句话：")
         print(
-            f"""  curl -s -X POST localhost:8000/api/sessions/{session_id}/messages \\
+            f"""  curl -s -X POST localhost:8002/api/sessions/{session_id}/messages \\
     -H 'Content-Type: application/json' \\
     -d '{{"content":"林教头，你这雪夜赶路，是要往哪里去？"}}' | python3 -m json.tool"""
         )

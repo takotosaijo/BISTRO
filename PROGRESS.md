@@ -11,10 +11,8 @@
 ## 快照
 
 - 更新时间：2026-09-15
-- 最新提交：`7088c06 工程管理骨架：AGENTS.md / PROGRESS.md / DECISIONS.md + Makefile`
-  （工作区有未提交改动：`.env.example`、`Makefile`、`README.md`、`AGENTS.md`、`DECISIONS.md`、
-  `PROGRESS.md`、`app/config.py`、`app/providers/`、`tests/test_provider_config.py`、
-  `scripts/check_llm.py`、`scripts/check_secrets.sh`）
+- 最新提交：本轮三个提交——工程管理骨架 → 接入 DeepSeek → 开发服务端口改 8002；
+  工作区干净（提交号看 `git log --oneline -3`）
 - 测试：**16/16 通过**（`make test`）
 - 数据冒烟测试：**7/7 通过**（`db/tests/verify_seed.sql`）
 - 密钥泄漏检查：**通过**（`make secrets`：`.env` 仍被忽略、被追踪文件与提交历史里都没有密钥）
@@ -138,3 +136,15 @@ F17/F18 标 `blocked` 的原因见下方阻塞项 B02。
   `scripts/check_llm.py` 真实调用通过，第十回林冲站得住人设
   （「林某是个刺配的配军，往沧州去。掌柜的，这雪夜开门，可有热酒卖？」）。
 - 未做：本轮改动尚未提交；工作区另有上一轮的文档改动一并待提交。
+
+### 2026-09-15 · 开发服务端口改 8002 + 在跑的服务上复验
+
+- 端口：8000 被本机另一个项目占用，`make run` 改为默认起在 8002（`PORT ?= 8002`，
+  可 `make run PORT=xxxx` 临时覆盖）；`README.md`、`AGENTS.md`、
+  `scripts/bootstrap_demo.py`、`scripts/check_llm.py` 里的示例地址一并同步。
+- 复验（服务已在 8002 上运行）：`GET /api/health` → `{"status":"ok","llm_provider":"deepseek",
+  "llm_model":"deepseek-v4-flash"}`；`GET /docs` → 200；
+  `GET /api/sessions/9/prompt-preview` → 第十回林冲的世界状态切片正确；
+  `POST /api/sessions/9/messages` → 真实模型回复「林某与你素不相识，问我去向，是何意？」，
+  按 prompt 里的「素不相识」关系作答，落库 `provider=deepseek`。
+- 本轮 `make check` 仍为 16/16 测试 + 7/7 数据冒烟 + 密钥检查通过。

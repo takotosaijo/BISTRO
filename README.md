@@ -41,7 +41,7 @@
 make setup      # 建虚拟环境 + 装依赖
 make db-reset   # 建库、建表、灌基础数据、跑冒烟测试
 make demo       # 造演示数据：张三 × 林冲 × 第十回
-make run        # 起服务 http://127.0.0.1:8000
+make run        # 起服务 http://127.0.0.1:8002
 make check      # 一致状态验证（测试 + 数据冒烟测试）
 ```
 
@@ -68,7 +68,7 @@ BISTRO_LLM_THINKING=auto                          # auto | disabled，见下
 ```bash
 .venv/bin/python scripts/check_llm.py                  # 进程内直连：验证整条链路出正文
 make run                                               # 另开一个终端起服务
-.venv/bin/python scripts/check_llm.py --http http://127.0.0.1:8000   # 首字延迟才准
+.venv/bin/python scripts/check_llm.py --http http://127.0.0.1:8002   # 首字延迟才准
 ```
 
 `deepseek-v4-flash` 是推理模型，默认会先流式输出一大段思考

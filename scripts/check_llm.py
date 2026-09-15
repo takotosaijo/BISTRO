@@ -11,7 +11,7 @@
 两种跑法：
   - 默认直接在进程内挂 ASGI（不依赖服务在跑），但 httpx 的 ASGI 传输层会
     缓冲整个响应，所以「首字延迟」这一项不准，只看是否出正文。
-  - `--http http://127.0.0.1:8000` 打真实服务（`make run`），首字延迟是真的。
+  - `--http http://127.0.0.1:8002` 打真实服务（`make run`），首字延迟是真的。
 
 需要数据库可达 + 网络可达。provider=mock 时只打印配置并退出，不消耗额度。
 退出码：0 正常 / 1 模型没吐出正文 / 2 调用出错。
@@ -61,7 +61,7 @@ def parse_args() -> argparse.Namespace:
         "--http",
         metavar="BASE_URL",
         default=None,
-        help="打已启动的服务（如 http://127.0.0.1:8000），首字延迟才准确",
+        help="打已启动的服务（如 http://127.0.0.1:8002），首字延迟才准确",
     )
     parser.add_argument("--timeout", type=float, default=120.0, help="整体超时（秒）")
     return parser.parse_args()
