@@ -247,11 +247,15 @@ def build_chat_messages(
 
     for msg in history:
         kind = msg.get("message_kind")
-        if kind not in ("text", "voice"):
+        if kind not in ("text", "voice", "narration"):
             continue
         content = (msg.get("content") or "").strip()
         if not content:
             continue
+        # 旁白（F26 的行动选项）是「这个人做了什么」，不是「他说了什么」；
+        # 不标出来，模型会把动作当成台词读。
+        if kind == "narration":
+            content = f"（动作）{content}"
         if msg.get("sender_kind") == "user":
             messages.append(ChatMessage("user", content))
         elif msg.get("sender_id") == responder_id:

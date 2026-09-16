@@ -403,6 +403,7 @@ async def send_message(session_id: int, payload: SendMessageRequest) -> Dict[str
             payload.content,
             _provider(),
             responder_slug=payload.responder_slug,
+            message_kind=payload.kind,
         )
 
 
@@ -450,7 +451,11 @@ async def send_message_stream(
         try:
             async with db.pool().acquire() as conn:
                 prepared = await chat_service.prepare_turn(
-                    conn, session_id, payload.content, responder_slug=payload.responder_slug
+                    conn,
+                    session_id,
+                    payload.content,
+                    responder_slug=payload.responder_slug,
+                    message_kind=payload.kind,
                 )
             yield _sse(
                 "meta",

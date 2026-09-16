@@ -8,9 +8,10 @@
 但「真实模型读了这一轮对话、判定发生了关系变化、代码照着写新边」这条端到端一直没跑出
 正向案例——两次试探林冲都在要凭证（「玉佩拿来我看」）。
 
-这条探针把凭证给足（娘亲留下的半块玉佩 + 只有家里人知道的身体特征 + 母亲遗言），
-然后机械地检查五件事：
-  ① 变化检测器（真实模型）判定发生了 character_to_user 的关系变化，且是**认下**不是拒绝
+这条探针把凭证给足（娘亲留下的半块玉佩 + 只有家里人知道的身体特征 + 母亲遗言 +
+答出他反复考问的旧案），然后机械地检查五件事：
+  ① 变化检测器（真实模型）判定发生了 character_to_user 的关系变化，且 `kind == "recognition"`
+     （**不抠 label 的字眼**：试过按关键词猜，把「却仍不肯当面认下这个女儿」当成了认下）
   ② `relationship_edges` 多出一个版本：旧边 `valid_to` = 第十回，新边 `valid_from` = 第十回
   ③ `relationship_changes` 留下审计（方向 / 前后标签 / 锚点 / 触发消息 / 原因）
   ④ prompt 里新说法生效、旧说法消失
@@ -44,8 +45,14 @@ OPENING_CHAPTER = 10
 AFTER_CHAPTER = 71
 BEFORE_CHAPTER = 2
 
-# 剧本：先认亲，再给实物凭证，最后给只有家里人知道的细节 + 母亲遗言。
-# 林冲这种人不见凭证不认人，所以凭证必须真的「递到手上」，不能只说「我有」。
+# 剧本：先认亲 → 把玉佩递到他手上 → 说出只有家里人知道的旧疤 → **回答他追问的**
+# （娘几时没的、坟在何处）→ 答出那桩他反复考问的旧案 → 拆掉「怕连累你」这个理由，
+# 只求他当着玉说一句。四条经验都来自真实模型的试探：① 林冲这种人不见凭证不认人，凭证要真的递到手上，
+# 不能只说「我有」；② 他会一路考问（娘几时没的、坟在何处、当年那桩事因何而起），
+# 不回答他就不往下走；③ 他会用「我是刺配的罪囚，认了是连累你」把人往外推，
+# 得由这个人自己把「我不怕」说死；④ 光动情没用，得直接要那一句。
+# 白虎堂那桩事在第七回就发生了，第十回的他本来就知道，
+# 女儿答得出来不算剧透。
 # 娘亲用苏氏——与 `make admin` 的「苏娘（林冲在东京时的旧相识）」对得上，
 # 这样「私生女」这条线在项目自己的样本里是自洽的。
 DEFAULT_TURNS = [
@@ -54,38 +61,17 @@ DEFAULT_TURNS = [
     "女儿知道空口无凭，不敢乱认。我从怀里取出那半块玉佩，双手捧到你面前——"
     "玉上刻着半个「苏」字，断口是斜的。娘说另外半块当年你带走了，两块合起来才是一个整字。",
     "娘还说：你左肩胛上有一道旧疤，是那年替她挡刀留下的，这道疤除了家里人谁也不知道。"
-    "她临终前只留下一句话——玉娆若是寻到你爹，替娘说一声，她没等错人。爹，女儿只剩这块玉了。",
-    "爹，女儿不逼你。这块玉放在你手里，认不认都由你——只是娘等了这些年，没等到你回去。",
+    "她临终前只留下一句话——玉娆若是寻到你爹，替娘说一声，她没等错人。",
+    "爹问娘几时没的、坟在何处——娘是三年前的冬天走的，咳血，走了一夜。"
+    "葬在东京城西乱葬岗，女儿攒了两年钱，才给她立了一块薄石碑。",
+    "爹问娘跟我讲过当年那桩事没有——讲过的。娘说爹在东京是八十万禁军枪棒教头，"
+    "后来因一口宝刀、白虎堂那桩冤案，被人算计了去，刺配沧州。娘每回说到这里就哭，"
+    "只说爹是冤枉的，这一句她到死都记着。",
+    "爹是怕认了女儿，反倒给女儿招祸——可女儿早就是罪臣的女儿了：娘死那年，"
+    "邻里就都知道我是谁家的骨肉；官府要查，认不认都查得着。女儿一个人被娘拉扯到十六岁，"
+    "什么苦都经过，不怕连累，只怕这辈子连一声「爹」都没叫出口。"
+    "爹就当着这块玉说一句认我的话——说完女儿立刻就走，绝不再来。",
 ]
-
-# 「认下」与「拒认」都算关系变化（F14 两种都支持），正向验针要的是前者。
-REJECTION_WORDS = (
-    "不认",
-    "不认识",
-    "不认得",
-    "没认",
-    "没有认",
-    "未认",
-    "尚未认",
-    "不肯认",
-    "拒不认",
-    "不敢认",
-    "认不出",
-    "认错",
-    "并非骨肉",
-    "冒充",
-)
-ACCEPTANCE_WORDS = ("认下", "认了", "认作", "相认", "认这门亲", "认你这个", "认你是")
-
-
-def is_acceptance(label: str) -> bool:
-    """审计标签是不是「他认下了」——不是拒绝，且带认亲字样。"""
-
-    text = label or ""
-    if any(word in text for word in REJECTION_WORDS):
-        return False
-    return any(word in text for word in ACCEPTANCE_WORDS)
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="F14 关系演化真实模型正向验针")
@@ -132,7 +118,8 @@ async def setup(
             "background": (
                 "娘亲苏氏是东京人氏，当年与爹未及提亲爹就出了事；她临终前把半块玉佩交给我，"
                 "说玉上刻着半个「苏」字，另外半块当年爹带走了；"
-                "她还说爹左肩胛上有一道旧疤，是替她挡刀留下的。"
+                "她还说爹左肩胛上有一道旧疤，是替她挡刀留下的；"
+                "爹在东京是八十万禁军枪棒教头，后来因一口宝刀、白虎堂那桩冤案被人算计了去。"
             ),
         },
     )
@@ -256,6 +243,7 @@ async def run(args: argparse.Namespace) -> int:
     await db.connect()
     problems: List[str] = []
     accepted_label: Optional[str] = None
+    seen_options: List[Dict[str, str]] = []
     try:
         async with httpx.AsyncClient(
             transport=transport, base_url=args.http or "http://evolve", timeout=args.timeout
@@ -280,29 +268,44 @@ async def run(args: argparse.Namespace) -> int:
                 body = response.json()
                 reply = body["reply"]["content"]
                 changes = body.get("relation_changes") or []
+                options = body.get("action_options") or []
                 print(f"[{index}/{len(turns)}] 用户：{text}")
                 print(f"         林冲：{reply}")
                 for change in changes:
                     print(
-                        f"         关系变化：{change['direction']} "
+                        f"         关系变化：{change['direction']} / {change.get('kind')} "
                         f"「{change['label_before']}」→「{change['label_after']}」"
                     )
+                if options:
+                    print("         行动选项（F26）：")
+                    for option in options:
+                        print(f"           · {option['label']}｜{option['action']}")
+                    if not 3 <= len(options) <= 4:
+                        fail(problems, f"选项数量不是 3~4：{len(options)}")
+                    if any(not o.get("label") or not o.get("action") for o in options):
+                        fail(problems, "选项缺 label 或 action")
+                    seen_options.extend(options)
                 hit = [
                     change
                     for change in changes
                     if change["direction"] == "character_to_user"
-                    and is_acceptance(change["label_after"])
+                    and change.get("kind") == "recognition"
                 ]
                 if hit:
                     accepted_label = hit[0]["label_after"]
                     print(f"         ✓ 他认下了：{accepted_label}")
                     break
                 if changes:
-                    print("         · 写下了关系变化，但不是「认下」——继续喂凭证")
+                    kinds = "、".join(str(change.get("kind")) for change in changes)
+                    print(f"         · 写下了关系变化，但 kind={kinds}，不是 recognition——继续喂凭证")
 
             print("-" * 72)
             if not accepted_label:
-                fail(problems, f"跑了 {len(turns)} 轮也没逼出「认下」，剧本里的凭证还不够")
+                fail(
+                    problems,
+                    f"跑了 {len(turns)} 轮也没逼出 kind=recognition 的「认下」——"
+                    "要么剧本里的凭证还不够，要么他一直在推后（deferral）",
+                )
                 return 1
 
             character_id = await fetch_character_id(args.character)
@@ -371,6 +374,7 @@ async def run(args: argparse.Namespace) -> int:
 
             print("-" * 72)
             print(f"留库备查：persona={persona['id']} session={session['id']}（试验台可切到这个身份复看）")
+            print(f"情境选项 : 全程给出 {len(seen_options)} 条（他明确提要求时才给）")
     finally:
         await db.disconnect()
 

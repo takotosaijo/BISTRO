@@ -70,10 +70,12 @@ async def prepare_turn(
     session_id: int,
     content: str,
     responder_slug: Optional[str] = None,
+    message_kind: str = "text",
 ) -> PreparedTurn:
     text = (content or "").strip()
     _require(bool(text), "消息内容不能为空")
     _require(len(text) <= MAX_CONTENT_LENGTH, f"消息过长，上限 {MAX_CONTENT_LENGTH} 字")
+    _require(message_kind in ("text", "narration"), "消息类型只能是 text 或 narration")
 
     session = await repo.get_session(conn, session_id)
     if session is None:
@@ -165,6 +167,7 @@ async def prepare_turn(
             sender_kind="user",
             sender_id=session["user_id"],
             content=text,
+            message_kind=message_kind,
             anchor_id=anchor["id"],
         )
         await repo.touch_session(conn, session_id)
@@ -231,10 +234,13 @@ async def chat_once(
     content: str,
     provider: LLMProvider,
     responder_slug: Optional[str] = None,
+    message_kind: str = "text",
 ) -> Dict[str, Any]:
     """非流式的一次完整对话，测试与简单客户端用。"""
 
-    prepared = await prepare_turn(conn, session_id, content, responder_slug=responder_slug)
+    prepared = await prepare_turn(
+        conn, session_id, content, responder_slug=responder_slug, message_kind=message_kind
+    )
     chunks: List[str] = []
     async for chunk in stream_reply(prepared, provider):
         chunks.append(chunk)
@@ -242,7 +248,7 @@ async def chat_once(
     if not reply_text:
         reply_text = "……"
     reply = await persist_reply(conn, prepared, reply_text, provider)
-    changes = await evolve_relations(
+    outcome = await evolve_relations(
         conn,
         session=prepared.session,
         responder=prepared.responder,
@@ -260,5 +266,6 @@ async def chat_once(
         },
         "responder": {"slug": prepared.responder["slug"], "name": prepared.responder["name"]},
         "provider": {"name": provider.name, "model": provider.model},
-        "relation_changes": changes,
+        "relation_changes": outcome["relation_changes"],
+        "action_options": outcome["action_options"],
     }

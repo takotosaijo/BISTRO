@@ -57,6 +57,10 @@ class SendMessageRequest(BaseModel):
     responder_slug: Optional[str] = Field(
         None, description="群聊里指定由谁回话；1v1 可省略"
     )
+    kind: str = Field(
+        "text",
+        description="text＝这个人说的话；narration＝这个人做的动作（F26 的点选项与自定义动作）",
+    )
 
 
 class SessionResponse(BaseModel):
@@ -87,4 +91,7 @@ class ChatResponse(BaseModel):
     provider: Dict[str, Any]
     relation_changes: List[Dict[str, Any]] = Field(
         default_factory=list, description="这一轮发生的关系变化（F14）"
+    )
+    action_options: List[Dict[str, Any]] = Field(
+        default_factory=list, description="角色明确提出要求时给出的行动选项（F26，3~4 个）"
     )

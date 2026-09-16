@@ -42,6 +42,14 @@ async def test_lab_page_has_identity_switcher(client: AsyncClient) -> None:
         assert marker in body, f"身份切换器少了「{marker}」"
 
 
+async def test_lab_page_has_action_options_ui(client: AsyncClient) -> None:
+    """F26 的选项先落在试验台里：没有这条栏，情境选项就只活在接口里。"""
+
+    body = (await client.get("/")).text
+    for marker in ("optionsList", "customAction", "sendAction", "action_options", "narration"):
+        assert marker in body, f"情境选项栏少了「{marker}」"
+
+
 async def test_one_account_can_hold_several_personas(client: AsyncClient) -> None:
     """一个账号下可以有多个身份，且互不干扰——这是 B 方案的核心。"""
 

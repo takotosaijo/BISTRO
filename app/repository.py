@@ -748,7 +748,7 @@ async def list_messages(
         await conn.fetch(
             """
             SELECT id, seq, sender_kind, sender_id, message_kind, content,
-                   audio_url, emotion, anchor_id, created_at
+                   audio_url, emotion, anchor_id, meta, created_at
             FROM (
               SELECT m.* FROM messages m
               LEFT JOIN timeline_anchors a ON a.id = m.anchor_id
@@ -805,3 +805,16 @@ async def append_message(
 
 async def touch_session(conn: asyncpg.Connection, session_id: int) -> None:
     await conn.execute("UPDATE sessions SET last_message_at = now() WHERE id = $1", session_id)
+
+
+async def merge_message_meta(
+    conn: asyncpg.Connection, message_id: int, patch: Dict[str, Any]
+) -> None:
+    """把一段 JSON 合并进消息的 meta。
+
+    F26 的行动选项就挂在这里（`messages.meta` 本来就是 jsonb），不动 schema。
+    """
+
+    await conn.execute(
+        "UPDATE messages SET meta = meta || $2::jsonb WHERE id = $1", message_id, patch
+    )

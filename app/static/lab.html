@@ -61,6 +61,13 @@
   .msg.sys { align-self: center; color: var(--muted); font-size: 13px;
              border: none; background: none; max-width: 90%; text-align: center; }
   .sender { font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+  .msg.act { align-self: flex-end; background: #efe7db; border-style: dashed; font-style: italic; }
+  /* 情境选项（F26）：他明确提要求时才出现，寻常说话这条栏是收起来的 */
+  .options { border-top: 1px solid var(--line); background: var(--accent-soft);
+             padding: 10px 18px; flex: 0 0 auto; }
+  .options .head { font-size: 12px; color: var(--accent); margin-bottom: 6px; }
+  .options-list { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+  .options-list button { background: var(--card); }
   .composer { display: flex; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--line); background: var(--card); }
   .composer input { font-size: 15px; }
   details.prompt { border-top: 1px solid var(--line); background: var(--card); flex: 0 0 auto; }
@@ -117,6 +124,14 @@
       <button id="reset" style="margin-left:auto" disabled>新开一个会话</button>
     </div>
     <div id="log"></div>
+    <div class="options" id="options" hidden>
+      <div class="head">他不是随口一说——他要你表个态。点一个，或者自己写一个动作：</div>
+      <div class="options-list" id="optionsList"></div>
+      <div class="row">
+        <input id="customAction" type="text" placeholder="自己写一个动作（会作为「动作」进历史）">
+        <button id="sendAction" disabled>做这个</button>
+      </div>
+    </div>
     <div class="composer">
       <input id="text" type="text" placeholder="说点什么…" disabled>
       <button id="send" disabled>发送</button>
@@ -207,6 +222,7 @@ function resetCharacter() {
   $("text").disabled = true;
   $("send").disabled = true;
   $("reset").disabled = true;
+  renderOptions([]);
 }
 
 async function selectPersona(personaId) {
@@ -310,7 +326,11 @@ async function loadHistory() {
   messages.forEach((m) => {
     const mine = m.sender_kind === "user";
     const name = mine ? "我" : ($("who").textContent || "他");
-    addMessage(mine ? "user" : "them", m.content, name);
+    if (m.message_kind === "narration") {
+      addMessage("act", m.content, "我（动作）");
+    } else {
+      addMessage(mine ? "user" : "them", m.content, name);
+    }
   });
 }
 
@@ -331,21 +351,60 @@ function addMessage(kind, content, sender) {
   return body;
 }
 
-async function send() {
-  const text = $("text").value.trim();
-  if (!text || state.busy) return;
+function renderOptions(options) {
+  const bar = $("options");
+  const list = $("optionsList");
+  list.innerHTML = "";
+  if (!options || !options.length) {
+    bar.hidden = true;
+    return;
+  }
+  options.forEach((option) => {
+    const button = document.createElement("button");
+    button.textContent = option.label;
+    button.title = option.action;
+    button.onclick = () => send(option.action, "narration");
+    list.appendChild(button);
+  });
+  $("customAction").value = "";
+  $("sendAction").disabled = false;
+  bar.hidden = false;
+}
+
+async function loadOptions(messageId) {
+  // 关系演化与选项共用后台那一次判定，跑在 done 之后——所以这里轮询到 meta 出现为止。
+  // 没提要求时写回来的是空数组，同样算「判定跑完了」，界面据此收起选项栏。
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const messages = await api("/api/sessions/" + state.session + "/messages?limit=1");
+    const last = messages[messages.length - 1];
+    if (last && last.id === messageId && last.meta && "action_options" in last.meta) {
+      renderOptions(last.meta.action_options);
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 700));
+  }
+  renderOptions([]);
+}
+
+async function send(text, kind) {
+  const spoken = (text === undefined ? $("text").value : text).trim();
+  if (!spoken || state.busy) return;
   state.busy = true;
   $("send").disabled = true;
+  $("sendAction").disabled = true;
   $("text").value = "";
+  $("customAction").value = "";
+  renderOptions([]);
   fail("");
-  addMessage("user", text, "我");
+  addMessage(kind === "narration" ? "act" : "user", spoken, kind === "narration" ? "我（动作）" : "我");
   const body = addMessage("them", "…", $("who").textContent);
+  let replyId = 0;
 
   try {
     const response = await fetch("/api/sessions/" + state.session + "/messages/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: text }),
+      body: JSON.stringify({ content: spoken, kind: kind || "text" }),
     });
     if (!response.ok) {
       const detail = await response.json().catch(() => ({}));
@@ -372,6 +431,8 @@ async function send() {
           $("log").scrollTop = $("log").scrollHeight;
         } else if (event === "error") {
           fail(payload.message || "生成出错");
+        } else if (event === "done") {
+          replyId = payload.message_id;
         }
       });
     }
@@ -383,6 +444,7 @@ async function send() {
     state.busy = false;
     $("send").disabled = false;
     await refreshPrompt().catch(() => {});
+    if (replyId) await loadOptions(replyId).catch(() => renderOptions([]));
   }
 }
 
@@ -395,6 +457,7 @@ async function refreshPrompt() {
 async function setTimeline(index) {
   state.index = index;
   renderAnchor();
+  renderOptions([]);   // 换了时间点，上一轮那组选项就过期了
   const anchor = state.anchors[index];
   await api("/api/users/" + state.userId + "/timeline", {
     method: "PUT",
@@ -434,8 +497,12 @@ async function savePersona() {
 $("slider").addEventListener("change", () => setTimeline(Number($("slider").value)).catch((e) => fail(e.message)));
 $("savePersona").addEventListener("click", () => savePersona().catch((e) => fail(e.message)));
 $("newPersona").addEventListener("click", () => loadCharacters().catch((e) => fail(e.message)));
-$("send").addEventListener("click", send);
+$("send").addEventListener("click", () => send());
 $("text").addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+$("sendAction").addEventListener("click", () => send($("customAction").value, "narration"));
+$("customAction").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") send($("customAction").value, "narration");
+});
 $("reset").addEventListener("click", () => {
   if (state.slug) openCharacter(state.slug, true).catch((e) => fail(e.message));
 });

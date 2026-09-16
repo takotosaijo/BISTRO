@@ -73,6 +73,9 @@ async def test_recognition_becomes_a_new_edge_version(client, conn) -> None:
     assert response.status_code == 200, response.text
     changes = response.json()["relation_changes"]
     assert changes, "这一轮该被判定为发生了关系变化"
+    # 结构化判定：F14 的验针认 kind，不认 label 的措辞（抠字眼会把
+    # 「却仍不肯当面认下这个女儿」当成认下，2026-09-16 踩过）
+    assert changes[0]["kind"] == "recognition"
 
     after = await _prompt(client, ctx["session"]["id"])
     assert "你已认下这门亲" in after
