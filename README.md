@@ -55,10 +55,14 @@ make run      # 然后打开 http://127.0.0.1:8002/
 ```
 
 单文件 HTML（[app/static/lab.html](app/static/lab.html)，无构建工具、无框架），由服务直接托管。
-左边从上到下是「以谁的身份进入」（`make admin` 造的那些账号）、章回滑块、12 张角色卡
-（带「此刻在场 / 尚未登场 / 已不在人世」徽章），中间是 1v1 对话，
+左边从上到下是「我的角色」（`make admin` 造的那几个身份，选中即切换身份）、
+「我在这个故事里是谁」（编辑当前身份，改完名字上面对应项立刻跟着变）、章回滑块、
+12 张角色卡（带「此刻在场 / 尚未登场 / 已不在人世」徽章）；中间是 1v1 对话，
 底部随时展开看**此刻发给模型的原样 prompt**。拨动滑块再问同一句话，就能看出「同一个人换了处境」；
-换个身份进来，就能看出「不同的人设会看到什么」。
+换个身份再问，就能看出「不同的人设会看到什么」。
+
+一个账号可以有多个身份（`personas`）：关系、会话、记忆挂在身份上，时间线挂在账号上。
+换身份等于换了一个人，所以切过去时对话与 prompt 面板会清空——历史不该被两个身份共用。
 
 它不是产品前端（F19 的正式形态还没定平台），是给人用手感受用的试验台——所以随时可以扔。
 
@@ -119,12 +123,14 @@ make eval                                                    # 全部探针（�
 |---|---|---|
 | GET | `/api/health` | 健康检查，回显当前 provider |
 | GET | `/api/works/{slug}/anchors` | 时间锚点列表（章回滑块的数据源） |
-| GET | `/api/works/{slug}/characters?user_id=` | 角色列表；带 user_id 时附带该时间点下的状态与可选性 |
-| POST | `/api/users` | 建用户 |
-| PUT | `/api/users/{id}/persona` | 设置「我在这个故事里是谁」 |
+| GET | `/api/works/{slug}/characters?persona_id=` | 角色列表；带 persona_id 时附带该时间点下的状态与可选性 |
+| POST | `/api/users` | 建账号 |
+| POST | `/api/users/{id}/personas` | 在账号下建一个身份（「我在这个故事里是谁」） |
+| GET | `/api/users/{id}/personas` | 这个账号的全部身份（试验台「我的角色」列表） |
+| GET/PUT | `/api/personas/{id}` | 读 / 改一个身份 |
 | GET/PUT | `/api/users/{id}/timeline` | 读取 / 拨动时间线（按 `chapter_no` 或 `anchor_seq`） |
-| POST | `/api/sessions` | 建会话，`direct` 或 `group` |
-| GET | `/api/sessions?user_id=` | 会话列表 |
+| POST | `/api/sessions` | 以某个身份建会话（`persona_id`），`direct` 或 `group` |
+| GET | `/api/sessions?persona_id=` | 这个身份的会话列表 |
 | GET | `/api/sessions/{id}/messages` | 会话历史 |
 | POST | `/api/sessions/{id}/messages` | 发消息，返回完整回复 |
 | POST | `/api/sessions/{id}/messages/stream` | 发消息，SSE 流式返回 |

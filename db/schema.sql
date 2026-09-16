@@ -213,18 +213,30 @@ CREATE TABLE users (
   created_at  timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE user_personas (
-  user_id     bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  work_id     bigint NOT NULL REFERENCES works(id) ON DELETE CASCADE,
-  name        text NOT NULL,
-  identity    text,        -- 我在这个世界里的身份
-  background  text,
-  appearance  text,
+-- 身份（persona）：一个账号在一个作品里可以有多个人设（玉娆 / 苏娘 / 路人张三）。
+-- 关系、会话、记忆都挂在身份上——换身份就是换了一个人，历史不该共用。
+-- 时间线（拨到第几回）留在账号层 `user_timeline_settings`：世界时间是同一个。
+--
+-- 2026-09-16 由「一个账号一个人设」（旧表 user_personas）升级而来，见 DECISIONS。
+CREATE TABLE personas (
+  id           bigserial PRIMARY KEY,
+  user_id      bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  work_id      bigint NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+  name         text NOT NULL,
+  identity     text,        -- 我在这个世界里的身份
+  background   text,
+  appearance   text,
   speech_style text,
-  free_note   text,
-  updated_at  timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (user_id, work_id)
+  free_note    text,
+  is_archived  boolean NOT NULL DEFAULT false,
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  updated_at   timestamptz NOT NULL DEFAULT now(),
+  -- 复合外键的靶子：让 sessions / relations / memories 能同时钉住身份与它所属的账号，
+  -- 从结构上杜绝「身份属于 A、记录却记在 B 名下」这种漂移
+  UNIQUE (id, user_id)
 );
+
+CREATE INDEX personas_user_work_idx ON personas (user_id, work_id) WHERE NOT is_archived;
 
 CREATE TABLE user_timeline_settings (
   user_id               bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -304,7 +316,8 @@ CREATE INDEX relationship_edges_user_idx
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE user_character_relations (
-  user_id          bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  persona_id       bigint NOT NULL,
+  user_id          bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,  -- 冗余但被复合外键锁死
   character_id     bigint NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
   stage            relation_stage NOT NULL DEFAULT 'stranger',
   char_affinity    smallint NOT NULL DEFAULT 0 CHECK (char_affinity BETWEEN -100 AND 100),  -- 角色对用户的好感
@@ -316,7 +329,10 @@ CREATE TABLE user_character_relations (
   interaction_count int NOT NULL DEFAULT 0,
   last_interaction_at timestamptz,
   updated_at       timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (user_id, character_id)
+  PRIMARY KEY (persona_id, character_id),
+  -- DEFERRABLE：允许在一个事务里同时搬迁 personas.user_id 与引用它的行（合并身份时用）
+  FOREIGN KEY (persona_id, user_id) REFERENCES personas(id, user_id)
+    ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 
 COMMENT ON TABLE user_character_relations IS
@@ -362,6 +378,7 @@ CREATE TABLE scenes (
 CREATE TABLE sessions (
   id                bigserial PRIMARY KEY,
   user_id           bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  persona_id        bigint NOT NULL,          -- 这个会话是「以哪个身份」开的
   work_id           bigint NOT NULL REFERENCES works(id) ON DELETE CASCADE,
   session_type      session_type NOT NULL,
   title             text NOT NULL,
@@ -372,7 +389,9 @@ CREATE TABLE sessions (
   summary           text,
   last_message_at   timestamptz,
   archived_at       timestamptz,
-  created_at        timestamptz NOT NULL DEFAULT now()
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (persona_id, user_id) REFERENCES personas(id, user_id)
+    ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 
 COMMENT ON COLUMN sessions.pinned_anchor_id IS
@@ -439,6 +458,7 @@ ALTER TABLE relationship_changes
 CREATE TABLE memories (
   id                bigserial PRIMARY KEY,
   user_id           bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  persona_id        bigint NOT NULL,          -- 记忆属于身份，不属于账号
   work_id           bigint NOT NULL REFERENCES works(id) ON DELETE CASCADE,
   scope             memory_scope NOT NULL,
   session_id        bigint REFERENCES sessions(id) ON DELETE CASCADE,     -- scope='session'
@@ -453,7 +473,9 @@ CREATE TABLE memories (
   recall_count      int NOT NULL DEFAULT 0,
   created_at        timestamptz NOT NULL DEFAULT now(),
   CHECK (scope <> 'session'   OR session_id   IS NOT NULL),
-  CHECK (scope <> 'character' OR character_id IS NOT NULL)
+  CHECK (scope <> 'character' OR character_id IS NOT NULL),
+  FOREIGN KEY (persona_id, user_id) REFERENCES personas(id, user_id)
+    ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 
 COMMENT ON TABLE memories IS

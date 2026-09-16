@@ -17,7 +17,18 @@ class UserResponse(BaseModel):
 
 
 class PersonaRequest(BaseModel):
+    """建一个身份。一个账号在一个作品里可以有多个身份，见 DECISIONS 2026-09-16。"""
+
     work_slug: str
+    name: str
+    identity: Optional[str] = None
+    background: Optional[str] = None
+    appearance: Optional[str] = None
+    speech_style: Optional[str] = None
+    free_note: Optional[str] = None
+
+
+class PersonaUpdateRequest(BaseModel):
     name: str
     identity: Optional[str] = None
     background: Optional[str] = None
@@ -33,7 +44,7 @@ class SetTimelineRequest(BaseModel):
 
 
 class CreateSessionRequest(BaseModel):
-    user_id: int
+    persona_id: int = Field(..., description="以哪个身份开口；账号由身份推出来")
     work_slug: str = "shuihu-100"
     session_type: str = Field("direct", description="direct 或 group")
     character_slugs: List[str]

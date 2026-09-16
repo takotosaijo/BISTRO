@@ -131,7 +131,9 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-async def make_reader_user(client: httpx.AsyncClient, chapter_no: int) -> int:
+async def make_reader_persona(client: httpx.AsyncClient, chapter_no: int) -> int:
+    """借一个身份来跑探针；时间线是账号级的，所以一个章节一个账号。"""
+
     response = await client.post(
         "/api/users",
         json={
@@ -143,8 +145,8 @@ async def make_reader_user(client: httpx.AsyncClient, chapter_no: int) -> int:
     response.raise_for_status()
     user = response.json()
 
-    await client.put(
-        f"/api/users/{user['id']}/persona",
+    persona = await client.post(
+        f"/api/users/{user['id']}/personas",
         json={
             "work_slug": WORK,
             "name": "张三",
@@ -152,20 +154,21 @@ async def make_reader_user(client: httpx.AsyncClient, chapter_no: int) -> int:
             "speech_style": "客气里带点精明",
         },
     )
+    persona.raise_for_status()
     await client.put(
         f"/api/users/{user['id']}/timeline",
         json={"work_slug": WORK, "chapter_no": chapter_no},
     )
-    return user["id"]
+    return persona.json()["id"]
 
 
 async def run_case(
-    client: httpx.AsyncClient, case: Dict[str, Any], user_id: int
+    client: httpx.AsyncClient, case: Dict[str, Any], persona_id: int
 ) -> Dict[str, Any]:
     session_response = await client.post(
         "/api/sessions",
         json={
-            "user_id": user_id,
+            "persona_id": persona_id,
             "work_slug": WORK,
             "session_type": "direct",
             "character_slugs": [case["slug"]],
@@ -219,12 +222,12 @@ async def run(args: argparse.Namespace) -> int:
         async with httpx.AsyncClient(
             transport=transport, base_url=args.http or "http://eval", timeout=args.timeout
         ) as client:
-            users: Dict[int, int] = {}
+            personas: Dict[int, int] = {}
             for index, case in enumerate(cases, start=1):
                 chapter_no = int(case["chapter_no"])
-                if chapter_no not in users:
-                    users[chapter_no] = await make_reader_user(client, chapter_no)
-                result = await run_case(client, case, users[chapter_no])
+                if chapter_no not in personas:
+                    personas[chapter_no] = await make_reader_persona(client, chapter_no)
+                result = await run_case(client, case, personas[chapter_no])
                 problems = check_reply(
                     case,
                     result["prompt"],

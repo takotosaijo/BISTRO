@@ -32,7 +32,9 @@ async def main() -> None:
                 raise SystemExit("数据库里没有《水浒传》，请先执行 scripts/dev_db.sh")
 
             user = await repo.ensure_user(conn, "demo", "演示用户")
-            await repo.upsert_persona(
+            # 幂等：已有身份就复用第一个，没有才建
+            existing_personas = await repo.list_personas(conn, user["id"], work["id"])
+            persona = existing_personas[0] if existing_personas else await repo.create_persona(
                 conn,
                 user["id"],
                 work["id"],
@@ -59,10 +61,10 @@ async def main() -> None:
                 SELECT s.id FROM sessions s
                 JOIN session_members m
                   ON m.session_id = s.id AND m.member_kind = 'character' AND m.member_id = $2
-                WHERE s.user_id = $1 AND s.session_type = 'direct' AND s.archived_at IS NULL
+                WHERE s.persona_id = $1 AND s.session_type = 'direct' AND s.archived_at IS NULL
                 ORDER BY s.id LIMIT 1
                 """,
-                user["id"],
+                persona["id"],
                 lin_chong["id"],
             )
             if existing:
@@ -71,7 +73,7 @@ async def main() -> None:
             else:
                 session = await repo.create_session(
                     conn,
-                    user_id=user["id"],
+                    persona_id=persona["id"],
                     work_id=work["id"],
                     session_type="direct",
                     title=f"与{lin_chong['name']}说话",

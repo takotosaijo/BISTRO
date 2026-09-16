@@ -35,28 +35,62 @@ async def test_lab_page_work_slug_exists(client: AsyncClient) -> None:
 
 
 async def test_lab_page_has_identity_switcher(client: AsyncClient) -> None:
-    """F24：试验台要能切换「以谁的身份进入」，否则人设变体只能靠手输。"""
+    """F24 + 一人多身份：试验台要能建/切自己的角色，否则人设变体只能靠手输。"""
 
     body = (await client.get("/")).text
-    for marker in ("以谁的身份进入", "devUser", "/api/dev/users", "/persona?work_slug="):
+    for marker in ("我的角色", "personaList", "newPersona", "/personas", "/api/personas/"):
         assert marker in body, f"身份切换器少了「{marker}」"
 
 
-async def test_dev_users_lists_identities_with_persona(client: AsyncClient) -> None:
-    """开发接口给出可选账号，带人设摘要——试验台的下拉框靠它填。"""
+async def test_one_account_can_hold_several_personas(client: AsyncClient) -> None:
+    """一个账号下可以有多个身份，且互不干扰——这是 B 方案的核心。"""
 
-    users = (await client.get("/api/dev/users", params={"limit": 5})).json()
-    assert users, "开发库里至少应该有账号"
-    assert {"id", "external_id", "persona_name", "persona_identity"} <= set(users[0])
-    # 默认过滤掉测试跑出来的垃圾账号，否则下拉框会被 iso-* / test-* 淹掉
-    assert not [u for u in users if u["external_id"].startswith(("test-", "iso-", "anchor-"))]
+    user = (
+        await client.post(
+            "/api/users",
+            json={"external_id": f"multi-{uuid.uuid4().hex[:8]}", "display_name": "多身份账号"},
+        )
+    ).json()
+    first = (
+        await client.post(
+            f"/api/users/{user['id']}/personas",
+            json={"work_slug": WORK, "name": "玉娆", "identity": "林冲失散多年的私生女"},
+        )
+    ).json()
+    second = (
+        await client.post(
+            f"/api/users/{user['id']}/personas",
+            json={"work_slug": WORK, "name": "苏娘", "identity": "林冲在东京时的旧相识"},
+        )
+    ).json()
+    assert first["id"] != second["id"]
 
-    everyone = (await client.get("/api/dev/users", params={"prefixes": "all", "limit": 100})).json()
-    assert len(everyone) >= len(users)
+    listed = (await client.get(f"/api/users/{user['id']}/personas")).json()
+    assert {p["name"] for p in listed} == {"玉娆", "苏娘"}
+
+    # 两个身份各自开会话，互不串
+    session_a = (
+        await client.post(
+            "/api/sessions",
+            json={"persona_id": first["id"], "work_slug": WORK, "session_type": "direct",
+                  "character_slugs": ["lin-chong"]},
+        )
+    ).json()
+    session_b = (
+        await client.post(
+            "/api/sessions",
+            json={"persona_id": second["id"], "work_slug": WORK, "session_type": "direct",
+                  "character_slugs": ["lin-chong"]},
+        )
+    ).json()
+    listed_a = (await client.get("/api/sessions", params={"persona_id": first["id"]})).json()
+    listed_b = (await client.get("/api/sessions", params={"persona_id": second["id"]})).json()
+    assert [s["id"] for s in listed_a] == [session_a["id"]]
+    assert [s["id"] for s in listed_b] == [session_b["id"]]
 
 
-async def test_persona_can_be_read_back(client: AsyncClient) -> None:
-    """切换身份后要能把人设读回来填进表单（以前只有 PUT，没有 GET）。"""
+async def test_persona_can_be_read_and_updated(client: AsyncClient) -> None:
+    """切换身份后要能把人设读回来，改名后列表也跟着变（两个面板合并的前提）。"""
 
     user = (
         await client.post(
@@ -64,10 +98,22 @@ async def test_persona_can_be_read_back(client: AsyncClient) -> None:
             json={"external_id": f"persona-{uuid.uuid4().hex[:8]}", "display_name": "读回测试"},
         )
     ).json()
-    await client.put(
-        f"/api/users/{user['id']}/persona",
-        json={"work_slug": WORK, "name": "玉娆", "identity": "林冲失散多年的私生女，随母姓"},
-    )
-    body = (await client.get(f"/api/users/{user['id']}/persona")).json()
-    assert body["persona"]["name"] == "玉娆"
-    assert "私生女" in body["persona"]["identity"]
+    created = (
+        await client.post(
+            f"/api/users/{user['id']}/personas",
+            json={"work_slug": WORK, "name": "玉娆", "identity": "林冲失散多年的私生女，随母姓"},
+        )
+    ).json()
+    got = (await client.get(f"/api/personas/{created['id']}")).json()
+    assert got["name"] == "玉娆"
+    assert "私生女" in got["identity"]
+
+    updated = (
+        await client.put(
+            f"/api/personas/{created['id']}",
+            json={"name": "玉娆（认亲后）", "identity": "林冲认下的女儿"},
+        )
+    ).json()
+    assert updated["name"] == "玉娆（认亲后）"
+    listed = (await client.get(f"/api/users/{user['id']}/personas")).json()
+    assert listed[0]["name"] == "玉娆（认亲后）"

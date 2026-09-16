@@ -175,7 +175,7 @@ async def test_streaming_endpoint(client: AsyncClient) -> None:
 async def test_character_list_marks_selectable(client: AsyncClient) -> None:
     user, _ = await make_user(client, chapter_no=2, character_slugs=["shi-jin"])
     response = await client.get(
-        f"/api/works/{WORK}/characters", params={"user_id": user["id"]}
+        f"/api/works/{WORK}/characters", params={"persona_id": user["persona"]["id"]}
     )
     assert response.status_code == 200
     by_slug = {c["slug"]: c for c in response.json()}

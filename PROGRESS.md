@@ -22,6 +22,7 @@
 - 模型层：**已接真实模型 DeepSeek `deepseek-v4-flash`**（`BISTRO_LLM_PROVIDER=deepseek`）；
   `mock` 仍保留，离线可跑通整条链路
 - 形态：`make run` 后 <http://127.0.0.1:8002/> 是**试验台页面**（F19 缩水版，单文件 HTML）
+- 身份模型：**一个账号多个身份**（`personas`，2026-09-16 迁移）；关系 / 会话 / 记忆挂身份，时间线挂账号
 - 当前阶段：第 0 期完成，第 1 期未开始
 
 ---
@@ -56,6 +57,7 @@
 | F22 | 会话摘要：按**锚点分段**压缩，为「≤ 当前锚点」的记忆做背景，替代只取最近 24 条原文 | 未实现 | `not_started` |
 | F23 | prompt 管理：四维度（用户 × 角色 × 锚点 × 会话）覆盖 + 来源标注 + 快照留痕 | 未实现（**形态待定稿**，见 DECISIONS 2026-09-16） | `not_started` |
 | F24 | 开发用 admin 用户：预置多个人设与会话，试验台可切换身份 | `make admin` + `pytest tests/test_lab_page.py`（浏览器实测见会话日志） | `passing` |
+| F25 | 一个账号多个身份（persona）：创建 / 切换 / 编辑，关系与会话按身份隔离 | `pytest tests/test_lab_page.py` + `pytest tests/test_session_isolation.py` | `passing` |
 
 F17/F18 标 `blocked` 的原因见下方阻塞项 B02。
 
@@ -103,9 +105,9 @@ F17/F18 标 `blocked` 的原因见下方阻塞项 B02。
 
 2026-09-16 按「关系由人设解析产出 + 记忆按锚点分层」两条决策重排，顺序即依赖顺序。
 
-1. **F12 重定义：人设语义 → 结构化关系**：保存人设时解析一次并落库（可手改、手改优先），
+1. **F12 重定义：人设语义 → 结构化关系**：保存身份时解析一次并落库（可手改、手改优先），
    一次声明产出两个方向；prompt 以结构化结果为准、persona 原文作背景。这是「不再默认素不相识」的落地。
-   **验收样本已经备好**：`admin`（路人）、`admin-daughter`（玉娆，林冲的私生女）、`admin-lover`（苏娘），
+   **验收样本已经备好**：`make admin` 建在 admin 账号下的三个身份（张三 / 玉娆 / 苏娘），
    现在三者在 prompt 里都是「素不相识，初次照面」——改完这条，玉娆与苏娘那两行必须变。
 2. **F14 关系演化（锚点版）**：互动后按阈值推进 `stage`，往 `relationship_changes` 落记录
    （该表要加 `anchor_id`，现在只能靠 `message_id` 反查）。
@@ -297,3 +299,23 @@ F17/F18 标 `blocked` 的原因见下方阻塞项 B02。
   I10 的现场，也是 F12 改完必须翻掉的那一行。
 - 验证：`make admin` 跑通；`pytest tests/test_lab_page.py`（5 项，含身份切换器与两个开发接口）；
   浏览器实测见上。`make check`：34/34 测试 + 数据冒烟 7/7 + 密钥检查通过。
+
+### 2026-09-16 · B 方案落地：身份（persona）升为一等实体
+
+- 决策与迁移细节见 DECISIONS「身份（persona）升为一等实体」。schema 侧：新增 `personas` 取代
+  `user_personas`；`sessions` / `user_character_relations` / `memories` 加 `persona_id`，
+  用 `(persona_id, user_id)` 复合外键锁死「身份属于哪个账号」（声明为 DEFERRABLE，便于合并身份时搬迁）。
+- 代码侧：persona 从「按 (user_id, work_id) upsert」改为按身份 `list / create / get / update`；
+  会话按 `persona_id` 建与列；关系累积与 prompt 装配都改用身份。
+  接口：`POST/GET /api/users/{id}/personas`、`GET/PUT /api/personas/{id}`；
+  会话与角色列表改用 `persona_id`；上一轮临时加的 `GET /api/dev/users` 删掉了（不再需要）。
+- 试验台按用户的意见合并了两个面板：**「我的角色」列表 + 「我在这个故事里是谁」表单**。
+  列表项显示「名字（身份）」，选中即切换；改名保存后列表项**立刻跟着变**并保持选中。
+  换身份会重置对话与 prompt 面板（关系、会话、记忆不跟另一个身份共用）。
+- 迁移（开发库，未 db-reset）：286 个身份从 `user_personas` 平移；362 个会话、118 条关系补上 `persona_id`；
+  `admin-daughter` / `admin-lover` / `lab-ui` 三个开发账号并进 `admin` 名下（13 个会话、2 条关系、
+  13 条成员、20 条消息改归属）；最后 `DROP TABLE user_personas`。迁移后 0 个会话缺身份。
+  `make admin` 改成按**身份语义**匹配（不按名字，因为存在两个「玉娆」），重复跑只更新不重复建。
+- 浏览器实测：`我的角色` 5 项（玉娆/情人、玉娆/私生女、苏娘、张三/姨夫、张三/掌柜）；
+  切到苏娘后人设表单变、对话清空；选林冲后关系行仍是「素不相识，初次照面」——**这正是 F12 要改的那一行**。
+- `make check`：34/34 测试 + 数据冒烟 7/7 + 密钥检查通过。

@@ -27,8 +27,8 @@ async def _new_user(client: AsyncClient, persona_name: str, chapter_no: int) -> 
     assert response.status_code == 200, response.text
     user = response.json()
 
-    response = await client.put(
-        f"/api/users/{user['id']}/persona",
+    response = await client.post(
+        f"/api/users/{user['id']}/personas",
         json={
             "work_slug": WORK,
             "name": persona_name,
@@ -37,6 +37,7 @@ async def _new_user(client: AsyncClient, persona_name: str, chapter_no: int) -> 
         },
     )
     assert response.status_code == 200, response.text
+    user["persona"] = response.json()
 
     response = await client.put(
         f"/api/users/{user['id']}/timeline",
@@ -48,14 +49,14 @@ async def _new_user(client: AsyncClient, persona_name: str, chapter_no: int) -> 
 
 async def _new_session(
     client: AsyncClient,
-    user_id: int,
+    persona_id: int,
     slugs: List[str],
     session_type: str = "direct",
 ) -> Dict[str, Any]:
     response = await client.post(
         "/api/sessions",
         json={
-            "user_id": user_id,
+            "persona_id": persona_id,
             "work_slug": WORK,
             "session_type": session_type,
             "character_slugs": slugs,
@@ -73,8 +74,8 @@ async def test_two_sessions_of_one_user_do_not_share_history(client, conn) -> No
     """同一个用户开两个会话：各自的消息、seq、上下文都是自己的。"""
 
     user = await _new_user(client, "张三", 10)
-    session_a = await _new_session(client, user["id"], ["lin-chong"])
-    session_b = await _new_session(client, user["id"], ["lin-chong"])
+    session_a = await _new_session(client, user["persona"]["id"], ["lin-chong"])
+    session_b = await _new_session(client, user["persona"]["id"], ["lin-chong"])
 
     await chat_service.prepare_turn(conn, session_a["id"], "东边那间铺子是我的")
     await chat_service.prepare_turn(conn, session_b["id"], "西边那座桥是我修的")
@@ -109,8 +110,8 @@ async def test_two_users_do_not_share_persona_or_history(client, conn) -> None:
 
     zhang = await _new_user(client, "张三", 10)
     li = await _new_user(client, "李四", 10)
-    session_a = await _new_session(client, zhang["id"], ["lin-chong"])
-    session_b = await _new_session(client, li["id"], ["lin-chong"])
+    session_a = await _new_session(client, zhang["persona"]["id"], ["lin-chong"])
+    session_b = await _new_session(client, li["persona"]["id"], ["lin-chong"])
 
     await chat_service.prepare_turn(conn, session_a["id"], "我姓张，城东开酒铺")
     await chat_service.prepare_turn(conn, session_b["id"], "我姓李，城西贩布")
@@ -129,8 +130,8 @@ async def test_parallel_turns_in_two_sessions_do_not_cross(client, conn) -> None
     """两个会话同时发消息（并发），回复与落库都不能串。"""
 
     user = await _new_user(client, "张三", 10)
-    lin = await _new_session(client, user["id"], ["lin-chong"])
-    gao = await _new_session(client, user["id"], ["gao-qiu"])
+    lin = await _new_session(client, user["persona"]["id"], ["lin-chong"])
+    gao = await _new_session(client, user["persona"]["id"], ["gao-qiu"])
 
     async def send(session_id: int, text: str) -> Dict[str, Any]:
         response = await client.post(
@@ -174,8 +175,8 @@ async def test_pinned_session_keeps_its_anchor_while_timeline_moves(client, conn
     """会话可以固定在某个时间点：用户整体拨动时间线，固定住的那个会话不受影响。"""
 
     user = await _new_user(client, "张三", 10)
-    pinned = await _new_session(client, user["id"], ["lin-chong"])
-    following = await _new_session(client, user["id"], ["lin-chong"])
+    pinned = await _new_session(client, user["persona"]["id"], ["lin-chong"])
+    following = await _new_session(client, user["persona"]["id"], ["lin-chong"])
 
     # 固定锚点在 schema 里是支持的，但接口还没开放，这里直接写库
     anchor_10 = await conn.fetchval(

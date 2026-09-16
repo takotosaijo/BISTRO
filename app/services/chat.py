@@ -122,7 +122,7 @@ async def prepare_turn(
     if availability == "hidden" and not allow_early:
         raise CharacterUnavailable(f"{responder['name']}在此时间点还不该出现")
 
-    persona = await repo.get_persona(conn, session["user_id"], session["work_id"])
+    persona = await repo.get_persona(conn, session["persona_id"])
     user_relation = await repo.get_user_character_relation(
         conn, session["user_id"], responder["id"]
     )
@@ -212,6 +212,7 @@ async def persist_reply(
         await repo.touch_session(conn, prepared.session["id"])
         await repo.bump_user_character_relation(
             conn,
+            prepared.session["persona_id"],
             prepared.session["user_id"],
             prepared.responder["id"],
             prepared.anchor["id"],

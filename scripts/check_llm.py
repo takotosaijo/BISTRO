@@ -99,15 +99,17 @@ async def run(args: argparse.Namespace) -> int:
                     },
                 )
             ).json()
-            await client.put(
-                f"/api/users/{user['id']}/persona",
-                json={
-                    "work_slug": WORK,
-                    "name": "张三",
-                    "identity": "东京城里开酒铺的掌柜",
-                    "speech_style": "客气里带点精明",
-                },
-            )
+            persona = (
+                await client.post(
+                    f"/api/users/{user['id']}/personas",
+                    json={
+                        "work_slug": WORK,
+                        "name": "张三",
+                        "identity": "东京城里开酒铺的掌柜",
+                        "speech_style": "客气里带点精明",
+                    },
+                )
+            ).json()
             await client.put(
                 f"/api/users/{user['id']}/timeline",
                 json={"work_slug": WORK, "chapter_no": args.chapter},
@@ -116,7 +118,7 @@ async def run(args: argparse.Namespace) -> int:
                 await client.post(
                     "/api/sessions",
                     json={
-                        "user_id": user["id"],
+                        "persona_id": persona["id"],
                         "work_slug": WORK,
                         "session_type": "direct",
                         "character_slugs": [args.character],

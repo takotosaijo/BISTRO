@@ -80,24 +80,27 @@
 <main>
   <aside>
     <div class="block">
-      <h2>以谁的身份进入</h2>
-      <select id="devUser"></select>
-      <div class="hint" id="identityHint">—</div>
-    </div>
-
-    <div class="block">
-      <h2>时间线</h2>
-      <input id="slider" type="range" min="0" max="11" step="1" value="0">
-      <div class="anchor-name" id="anchorName">加载中…</div>
+      <h2>我的角色（以谁的身份进入）</h2>
+      <select id="personaList"></select>
+      <div class="row">
+        <button id="newPersona">新建角色</button>
+        <button id="savePersona">保存</button>
+      </div>
     </div>
 
     <div class="block">
       <h2>我在这个故事里是谁</h2>
       <input id="personaName" type="text" placeholder="名字">
-      <div class="row">
-        <input id="personaIdentity" type="text" placeholder="身份">
-        <button id="savePersona">保存</button>
-      </div>
+      <input id="personaIdentity" type="text" placeholder="身份（如：林冲失散多年的私生女）" style="margin-top:6px">
+      <input id="personaBackground" type="text" placeholder="背景（可留空）" style="margin-top:6px">
+      <input id="personaAppearance" type="text" placeholder="外貌（可留空）" style="margin-top:6px">
+      <input id="personaSpeech" type="text" placeholder="说话方式（可留空）" style="margin-top:6px">
+    </div>
+
+    <div class="block">
+      <h2>时间线（账号级）</h2>
+      <input id="slider" type="range" min="0" max="11" step="1" value="0">
+      <div class="anchor-name" id="anchorName">加载中…</div>
     </div>
 
     <div class="block">
@@ -127,7 +130,10 @@
 
 <script>
 const WORK = "shuihu-100";
-const state = { userId: 0, anchors: [], characters: [], index: 0, slug: null, session: 0, busy: false };
+const state = {
+  userId: 0, personaId: 0, personas: [],
+  anchors: [], characters: [], index: 0, slug: null, session: 0, busy: false,
+};
 const $ = (id) => document.getElementById(id);
 
 function fail(message) { $("err").textContent = message || ""; }
@@ -154,44 +160,43 @@ async function init() {
   state.anchors = await api("/api/works/" + WORK + "/anchors");
   $("slider").max = String(state.anchors.length - 1);
 
-  await loadIdentities();
-  const preferred = localStorage.getItem("lab.identity") || "admin";
-  if ([...$("devUser").options].some((o) => o.value === preferred)) $("devUser").value = preferred;
-  await switchIdentity($("devUser").value);
+  // 开发阶段只有一个账号；「我是谁」是账号下的身份（可以有好几个）
+  const account = await post("/api/users", { external_id: "admin", display_name: "开发账号" });
+  state.userId = account.id;
+
+  await loadPersonas();
+  const saved = localStorage.getItem("lab.persona");
+  const pick = state.personas.find((p) => String(p.id) === saved) || state.personas[0];
+  if (pick) {
+    await selectPersona(pick.id);
+  } else {
+    newPersona();
+    await loadCharacters();
+  }
 }
 
-async function loadIdentities() {
-  const users = await api("/api/dev/users");
-  const select = $("devUser");
+async function loadPersonas() {
+  state.personas = await api("/api/users/" + state.userId + "/personas?work_slug=" + WORK);
+  const select = $("personaList");
   select.innerHTML = "";
-  users.forEach((u) => {
+  state.personas.forEach((p) => {
     const option = document.createElement("option");
-    option.value = u.external_id;
-    option.textContent = u.external_id + "（" + (u.persona_name || u.display_name || "无") + "）";
+    option.value = String(p.id);
+    option.textContent = p.name + (p.identity ? "（" + p.identity + "）" : "");
     select.appendChild(option);
   });
-  select.onchange = () => switchIdentity(select.value).catch((e) => fail(e.message));
+  select.onchange = () => selectPersona(Number(select.value)).catch((e) => fail(e.message));
 }
 
-async function switchIdentity(externalId) {
-  fail("");
-  const user = await post("/api/users", { external_id: externalId, display_name: externalId });
-  state.userId = user.id;
-  localStorage.setItem("lab.identity", externalId);
+function fillPersonaForm(persona) {
+  $("personaName").value = (persona && persona.name) || "";
+  $("personaIdentity").value = (persona && persona.identity) || "";
+  $("personaBackground").value = (persona && persona.background) || "";
+  $("personaAppearance").value = (persona && persona.appearance) || "";
+  $("personaSpeech").value = (persona && persona.speech_style) || "";
+}
 
-  const persona = await api("/api/users/" + user.id + "/persona?work_slug=" + WORK);
-  const me = persona.persona || {};
-  $("personaName").value = me.name || "张三";
-  $("personaIdentity").value = me.identity || "";
-  $("identityHint").textContent = me.identity || "（还没写人设）";
-
-  const timeline = await api("/api/users/" + user.id + "/timeline?work_slug=" + WORK);
-  const current = timeline.current;
-  state.index = Math.max(0, state.anchors.findIndex((a) => current && a.id === current.id));
-  $("slider").value = String(state.index);
-  renderAnchor();
-
-  // 换人 = 换一整套上下文：清掉选中的角色、会话与 prompt 面板
+function resetCharacter() {
   state.slug = null;
   state.session = 0;
   $("who").textContent = "还没有选中角色";
@@ -201,7 +206,34 @@ async function switchIdentity(externalId) {
   $("text").disabled = true;
   $("send").disabled = true;
   $("reset").disabled = true;
+}
+
+async function selectPersona(personaId) {
+  fail("");
+  state.personaId = personaId;
+  localStorage.setItem("lab.persona", String(personaId));
+  const persona = state.personas.find((p) => p.id === personaId)
+    || await api("/api/personas/" + personaId);
+  fillPersonaForm(persona);
+  $("personaList").value = String(personaId);
+
+  const timeline = await api("/api/users/" + state.userId + "/timeline?work_slug=" + WORK);
+  const current = timeline.current;
+  state.index = Math.max(0, state.anchors.findIndex((a) => current && a.id === current.id));
+  $("slider").value = String(state.index);
+  renderAnchor();
+
+  // 换身份 = 换一整套上下文：关系、会话、记忆都不该跟另一个身份共用
+  resetCharacter();
   await loadCharacters();
+}
+
+function newPersona() {
+  state.personaId = 0;
+  fillPersonaForm(null);
+  fail("");
+  resetCharacter();
+  addMessage("sys", "填好名字与身份，点「保存」就创建了一个新角色。");
 }
 
 function renderAnchor() {
@@ -211,7 +243,8 @@ function renderAnchor() {
 }
 
 async function loadCharacters() {
-  state.characters = await api("/api/works/" + WORK + "/characters?user_id=" + state.userId);
+  const suffix = state.personaId ? "?persona_id=" + state.personaId : "";
+  state.characters = await api("/api/works/" + WORK + "/characters" + suffix);
   const box = $("chars");
   box.innerHTML = "";
   state.characters.forEach((c) => {
@@ -247,13 +280,13 @@ async function openCharacter(slug, forceNew) {
   await loadCharacters();
 
   // 复用同一个会话：拨动时间线时才能看出「同一个他，换了处境」
-  const sessions = await api("/api/sessions?user_id=" + state.userId + "&work_slug=" + WORK);
+  const sessions = await api("/api/sessions?persona_id=" + state.personaId + "&work_slug=" + WORK);
   const existing = forceNew ? null
     : sessions.find((s) => s.session_type === "direct" && s.title === character.name);
   state.session = existing
     ? existing.id
     : (await post("/api/sessions", {
-        user_id: state.userId, work_slug: WORK, session_type: "direct", character_slugs: [slug],
+        persona_id: state.personaId, work_slug: WORK, session_type: "direct", character_slugs: [slug],
       })).id;
 
   $("text").disabled = false;
@@ -367,21 +400,31 @@ async function setTimeline(index) {
 }
 
 async function savePersona() {
-  await api("/api/users/" + state.userId + "/persona", {
-    method: "PUT",
-    body: JSON.stringify({
-      work_slug: WORK,
-      name: $("personaName").value || "张三",
-      identity: $("personaIdentity").value || "来历不明的人",
-    }),
-  });
+  const body = {
+    name: $("personaName").value.trim() || "无名",
+    identity: $("personaIdentity").value.trim() || null,
+    background: $("personaBackground").value.trim() || null,
+    appearance: $("personaAppearance").value.trim() || null,
+    speech_style: $("personaSpeech").value.trim() || null,
+  };
+  const saved = state.personaId
+    ? await api("/api/personas/" + state.personaId, { method: "PUT", body: JSON.stringify(body) })
+    : await post("/api/users/" + state.userId + "/personas", Object.assign({ work_slug: WORK }, body));
+  state.personaId = saved.id;
+  localStorage.setItem("lab.persona", String(saved.id));
+
   fail("");
-  addMessage("sys", "人设已保存；再发一句话，看 prompt 里的「你与在场之人」变了没有。");
+  // 列表项跟着改名字/身份：这是「两个面板合并」的关键——改完就能在上面的列表里看到
+  await loadPersonas();
+  $("personaList").value = String(saved.id);
+  fillPersonaForm(saved);
+  addMessage("sys", "角色已保存。换一个身份进来看，prompt 里的「你与在场之人」会跟着变。");
   await refreshPrompt().catch(() => {});
 }
 
 $("slider").addEventListener("change", () => setTimeline(Number($("slider").value)).catch((e) => fail(e.message)));
 $("savePersona").addEventListener("click", () => savePersona().catch((e) => fail(e.message)));
+$("newPersona").addEventListener("click", () => loadCharacters().catch((e) => fail(e.message)));
 $("send").addEventListener("click", send);
 $("text").addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
 $("reset").addEventListener("click", () => {

@@ -138,14 +138,23 @@ async def get_user(conn: asyncpg.Connection, user_id: int) -> Optional[Dict[str,
     )
 
 
-async def get_persona(
+PERSONA_COLUMNS = """
+  id, user_id, work_id, name, identity, background, appearance, speech_style,
+  free_note, is_archived, created_at, updated_at
+"""
+
+
+async def list_personas(
     conn: asyncpg.Connection, user_id: int, work_id: int
-) -> Optional[Dict[str, Any]]:
-    return row_to_dict(
-        await conn.fetchrow(
-            """
-            SELECT name, identity, background, appearance, speech_style, free_note
-            FROM user_personas WHERE user_id = $1 AND work_id = $2
+) -> List[Dict[str, Any]]:
+    """一个账号在这个作品里的所有身份。"""
+
+    return rows_to_dicts(
+        await conn.fetch(
+            f"""
+            SELECT {PERSONA_COLUMNS} FROM personas
+            WHERE user_id = $1 AND work_id = $2 AND NOT is_archived
+            ORDER BY id
             """,
             user_id,
             work_id,
@@ -153,7 +162,17 @@ async def get_persona(
     )
 
 
-async def upsert_persona(
+async def get_persona(
+    conn: asyncpg.Connection, persona_id: int
+) -> Optional[Dict[str, Any]]:
+    return row_to_dict(
+        await conn.fetchrow(
+            f"SELECT {PERSONA_COLUMNS} FROM personas WHERE id = $1", persona_id
+        )
+    )
+
+
+async def create_persona(
     conn: asyncpg.Connection,
     user_id: int,
     work_id: int,
@@ -163,29 +182,54 @@ async def upsert_persona(
     appearance: Optional[str] = None,
     speech_style: Optional[str] = None,
     free_note: Optional[str] = None,
-) -> None:
-    await conn.execute(
-        """
-        INSERT INTO user_personas (user_id, work_id, name, identity, background,
-                                   appearance, speech_style, free_note)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        ON CONFLICT (user_id, work_id) DO UPDATE SET
-          name = EXCLUDED.name,
-          identity = EXCLUDED.identity,
-          background = EXCLUDED.background,
-          appearance = EXCLUDED.appearance,
-          speech_style = EXCLUDED.speech_style,
-          free_note = EXCLUDED.free_note,
-          updated_at = now()
-        """,
-        user_id,
-        work_id,
-        name,
-        identity,
-        background,
-        appearance,
-        speech_style,
-        free_note,
+) -> Dict[str, Any]:
+    return dict(
+        await conn.fetchrow(
+            f"""
+            INSERT INTO personas (user_id, work_id, name, identity, background,
+                                  appearance, speech_style, free_note)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING {PERSONA_COLUMNS}
+            """,
+            user_id,
+            work_id,
+            name,
+            identity,
+            background,
+            appearance,
+            speech_style,
+            free_note,
+        )
+    )
+
+
+async def update_persona(
+    conn: asyncpg.Connection,
+    persona_id: int,
+    name: str,
+    identity: Optional[str] = None,
+    background: Optional[str] = None,
+    appearance: Optional[str] = None,
+    speech_style: Optional[str] = None,
+    free_note: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    return row_to_dict(
+        await conn.fetchrow(
+            f"""
+            UPDATE personas SET
+              name = $2, identity = $3, background = $4, appearance = $5,
+              speech_style = $6, free_note = $7, updated_at = now()
+            WHERE id = $1
+            RETURNING {PERSONA_COLUMNS}
+            """,
+            persona_id,
+            name,
+            identity,
+            background,
+            appearance,
+            speech_style,
+            free_note,
+        )
     )
 
 
@@ -291,9 +335,9 @@ async def list_effective_relationships(
 
 
 async def get_user_character_relation(
-    conn: asyncpg.Connection, user_id: int, character_id: int
+    conn: asyncpg.Connection, persona_id: int, character_id: int
 ) -> Optional[Dict[str, Any]]:
-    """角色对用户的互动累积（好感度、阶段、里程碑），跨时间线延续。"""
+    """角色对这个身份的互动累积（好感度、阶段、里程碑）。"""
 
     return row_to_dict(
         await conn.fetchrow(
@@ -301,9 +345,9 @@ async def get_user_character_relation(
             SELECT stage, char_affinity, char_trust, char_wariness, user_stance,
                    milestones, interaction_count, last_interaction_at
             FROM user_character_relations
-            WHERE user_id = $1 AND character_id = $2
+            WHERE persona_id = $1 AND character_id = $2
             """,
-            user_id,
+            persona_id,
             character_id,
         )
     )
@@ -311,21 +355,26 @@ async def get_user_character_relation(
 
 async def bump_user_character_relation(
     conn: asyncpg.Connection,
+    persona_id: int,
     user_id: int,
     character_id: int,
     anchor_id: Optional[int],
 ) -> None:
+    """记一次互动。user_id 是冗余列（复合外键保证与 persona 一致）。"""
+
     await conn.execute(
         """
         INSERT INTO user_character_relations
-          (user_id, character_id, interaction_count, first_met_anchor_id, last_interaction_at)
-        VALUES ($1, $2, 1, $3, now())
-        ON CONFLICT (user_id, character_id) DO UPDATE SET
+          (persona_id, user_id, character_id, interaction_count, first_met_anchor_id,
+           last_interaction_at)
+        VALUES ($1, $2, $3, 1, $4, now())
+        ON CONFLICT (persona_id, character_id) DO UPDATE SET
           interaction_count = user_character_relations.interaction_count + 1,
           first_met_anchor_id = COALESCE(user_character_relations.first_met_anchor_id, EXCLUDED.first_met_anchor_id),
           last_interaction_at = now(),
           updated_at = now()
         """,
+        persona_id,
         user_id,
         character_id,
         anchor_id,
@@ -339,7 +388,7 @@ async def bump_user_character_relation(
 
 async def create_session(
     conn: asyncpg.Connection,
-    user_id: int,
+    persona_id: int,
     work_id: int,
     session_type: str,
     title: str,
@@ -348,16 +397,23 @@ async def create_session(
     is_non_canon: bool = False,
     scene_id: Optional[int] = None,
 ) -> Dict[str, Any]:
+    """建会话。user_id 从 persona 推出来，免得调用方传错。"""
+
+    user_id = await conn.fetchval("SELECT user_id FROM personas WHERE id = $1", persona_id)
+    if user_id is None:
+        raise ValueError(f"身份不存在：{persona_id}")
+
     async with conn.transaction():
         row = await conn.fetchrow(
             """
-            INSERT INTO sessions (user_id, work_id, session_type, title,
+            INSERT INTO sessions (user_id, persona_id, work_id, session_type, title,
                                   created_anchor_id, scene_id, is_non_canon)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            RETURNING id, user_id, work_id, session_type, title, created_anchor_id,
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING id, user_id, persona_id, work_id, session_type, title, created_anchor_id,
                       pinned_anchor_id, scene_id, is_non_canon, created_at
             """,
             user_id,
+            persona_id,
             work_id,
             session_type,
             title,
@@ -391,7 +447,7 @@ async def get_session(conn: asyncpg.Connection, session_id: int) -> Optional[Dic
     return row_to_dict(
         await conn.fetchrow(
             """
-            SELECT id, user_id, work_id, session_type, title, created_anchor_id,
+            SELECT id, user_id, persona_id, work_id, session_type, title, created_anchor_id,
                    pinned_anchor_id, scene_id, is_non_canon, summary,
                    last_message_at, archived_at
             FROM sessions WHERE id = $1
@@ -402,8 +458,10 @@ async def get_session(conn: asyncpg.Connection, session_id: int) -> Optional[Dic
 
 
 async def list_sessions(
-    conn: asyncpg.Connection, user_id: int, work_id: Optional[int] = None
+    conn: asyncpg.Connection, persona_id: int, work_id: Optional[int] = None
 ) -> List[Dict[str, Any]]:
+    """这个身份开过的会话（换身份不该看到另一个身份的历史）。"""
+
     return rows_to_dicts(
         await conn.fetch(
             """
@@ -417,13 +475,13 @@ async def list_sessions(
             LEFT JOIN session_members m
                    ON m.session_id = s.id AND m.member_kind = 'character'
             LEFT JOIN characters c ON c.id = m.member_id
-            WHERE s.user_id = $1
+            WHERE s.persona_id = $1
               AND ($2::bigint IS NULL OR s.work_id = $2)
               AND s.archived_at IS NULL
             GROUP BY s.id
             ORDER BY COALESCE(s.last_message_at, s.created_at) DESC
             """,
-            user_id,
+            persona_id,
             work_id,
         )
     )

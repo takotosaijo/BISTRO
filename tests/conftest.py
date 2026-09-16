@@ -57,7 +57,10 @@ async def make_user(
     character_slugs: list,
     session_type: str = "direct",
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    """建一个用户、写好用户人设、拨好时间线、开一个会话。"""
+    """建一个账号、建一个身份、拨好时间线、以该身份开一个会话。
+
+    persona 会挂在返回的 user["persona"] 上，需要时直接取。
+    """
 
     external_id = f"test-{uuid.uuid4().hex[:10]}"
     response = await client.post(
@@ -66,8 +69,8 @@ async def make_user(
     assert response.status_code == 200, response.text
     user = response.json()
 
-    response = await client.put(
-        f"/api/users/{user['id']}/persona",
+    response = await client.post(
+        f"/api/users/{user['id']}/personas",
         json={
             "work_slug": WORK,
             "name": "张三",
@@ -76,6 +79,7 @@ async def make_user(
         },
     )
     assert response.status_code == 200, response.text
+    user["persona"] = response.json()
 
     response = await client.put(
         f"/api/users/{user['id']}/timeline",
@@ -86,7 +90,7 @@ async def make_user(
     response = await client.post(
         "/api/sessions",
         json={
-            "user_id": user["id"],
+            "persona_id": user["persona"]["id"],
             "work_slug": WORK,
             "session_type": session_type,
             "character_slugs": character_slugs,

@@ -23,22 +23,23 @@ async def _user(client: AsyncClient, chapter_no: int) -> Dict[str, Any]:
             json={"external_id": f"anchor-{uuid.uuid4().hex[:8]}", "display_name": "张三"},
         )
     ).json()
-    await client.put(
-        f"/api/users/{user['id']}/persona",
+    persona = await client.post(
+        f"/api/users/{user['id']}/personas",
         json={"work_slug": WORK, "name": "张三", "identity": "东京城里开酒铺的掌柜"},
     )
+    user["persona"] = persona.json()
     await client.put(
         f"/api/users/{user['id']}/timeline", json={"work_slug": WORK, "chapter_no": chapter_no}
     )
     return user
 
 
-async def _session(client: AsyncClient, user_id: int) -> Dict[str, Any]:
+async def _session(client: AsyncClient, persona_id: int) -> Dict[str, Any]:
     return (
         await client.post(
             "/api/sessions",
             json={
-                "user_id": user_id,
+                "persona_id": persona_id,
                 "work_slug": WORK,
                 "session_type": "direct",
                 "character_slugs": ["lin-chong"],
@@ -55,7 +56,7 @@ async def test_past_messages_are_carried_forward(client, conn) -> None:
     """第 10 回说过的话，滑到第 71 回仍在他记得的范围内。"""
 
     user = await _user(client, 10)
-    session = await _session(client, user["id"])
+    session = await _session(client, user["persona"]["id"])
     await chat_service.prepare_turn(conn, session["id"], "林教头，我姓张，城东开酒铺")
 
     await client.put(
@@ -74,7 +75,7 @@ async def test_future_messages_are_dropped_when_sliding_back(client, conn) -> No
     """在第 71 回说过的话，滑回第 10 回就不该出现在上下文里。"""
 
     user = await _user(client, 10)
-    session = await _session(client, user["id"])
+    session = await _session(client, user["persona"]["id"])
     await chat_service.prepare_turn(conn, session["id"], "第十回：我陪你走一程")
 
     await client.put(
@@ -99,7 +100,7 @@ async def test_raw_log_still_returns_everything(client, conn) -> None:
     """接口原样返回整条日志——用户自己记得，被过滤的只是角色能看到的那部分。"""
 
     user = await _user(client, 10)
-    session = await _session(client, user["id"])
+    session = await _session(client, user["persona"]["id"])
     await chat_service.prepare_turn(conn, session["id"], "第十回的话")
     await client.put(
         f"/api/users/{user['id']}/timeline", json={"work_slug": WORK, "chapter_no": 71}

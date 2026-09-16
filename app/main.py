@@ -19,6 +19,7 @@ from app.schemas import (
     CreateSessionRequest,
     CreateUserRequest,
     PersonaRequest,
+    PersonaUpdateRequest,
     SendMessageRequest,
     SetTimelineRequest,
 )
@@ -102,19 +103,25 @@ async def list_anchors(work_slug: str) -> List[Dict[str, Any]]:
 
 @app.get("/api/works/{work_slug}/characters")
 async def list_characters(
-    work_slug: str, user_id: Optional[int] = Query(None)
+    work_slug: str, persona_id: Optional[int] = Query(None)
 ) -> List[Dict[str, Any]]:
-    """带上 user_id 时，同时返回该用户当前时间点下的角色状态与可用性。"""
+    """带上 persona_id 时，同时返回该身份所属账号当前时间点下的角色状态与可用性。
+
+    时间线是账号级的（世界时间同一个），所以这里用身份反查账号，再取当前锚点。
+    """
 
     async with db.pool().acquire() as conn:
         work = await repo.get_work_by_slug(conn, work_slug)
         if work is None:
             raise NotFound("作品不存在")
         characters = await repo.list_characters(conn, work["id"])
-        if user_id is None:
+        if persona_id is None:
             return characters
 
-        anchor = await repo.get_current_anchor(conn, user_id, work["id"])
+        persona = await repo.get_persona(conn, persona_id)
+        if persona is None:
+            raise NotFound("身份不存在")
+        anchor = await repo.get_current_anchor(conn, persona["user_id"], work["id"])
         states = await repo.get_character_states(
             conn, anchor["id"], [c["id"] for c in characters]
         ) if anchor else {}
@@ -138,13 +145,15 @@ async def create_user(payload: CreateUserRequest) -> Dict[str, Any]:
         return await repo.ensure_user(conn, payload.external_id, payload.display_name)
 
 
-@app.put("/api/users/{user_id}/persona")
-async def set_persona(user_id: int, payload: PersonaRequest) -> Dict[str, Any]:
+@app.post("/api/users/{user_id}/personas")
+async def create_persona(user_id: int, payload: PersonaRequest) -> Dict[str, Any]:
+    """给这个账号建一个身份。一个账号可以有很多个（玉娆 / 苏娘 / 路人张三）。"""
+
     async with db.pool().acquire() as conn:
         work = await repo.get_work_by_slug(conn, payload.work_slug)
         if work is None:
             raise NotFound("作品不存在")
-        await repo.upsert_persona(
+        return await repo.create_persona(
             conn,
             user_id,
             work["id"],
@@ -155,56 +164,46 @@ async def set_persona(user_id: int, payload: PersonaRequest) -> Dict[str, Any]:
             speech_style=payload.speech_style,
             free_note=payload.free_note,
         )
-        return {"ok": True, "persona": await repo.get_persona(conn, user_id, work["id"])}
 
 
-@app.get("/api/users/{user_id}/persona")
-async def get_persona(user_id: int, work_slug: str = Query("shuihu-100")) -> Dict[str, Any]:
+@app.get("/api/users/{user_id}/personas")
+async def list_personas(
+    user_id: int, work_slug: str = Query("shuihu-100")
+) -> List[Dict[str, Any]]:
+    """这个账号在当前作品里的全部身份——试验台的「我的角色」列表就是它。"""
+
     async with db.pool().acquire() as conn:
         work = await repo.get_work_by_slug(conn, work_slug)
         if work is None:
             raise NotFound("作品不存在")
-        return {"work": work["slug"], "persona": await repo.get_persona(conn, user_id, work["id"])}
+        return await repo.list_personas(conn, user_id, work["id"])
 
 
-@app.get("/api/dev/users")
-async def list_dev_users(
-    work_slug: str = Query("shuihu-100"),
-    limit: int = Query(20, ge=1, le=100),
-    prefixes: str = Query(
-        "admin,lab-ui,demo",
-        description="external_id 前缀白名单，逗号分隔；用 all 列出全部账号",
-    ),
-) -> List[Dict[str, Any]]:
-    """开发用：试验台的「以谁的身份进入」需要一份可选账号列表。
-
-    不是产品接口——正式形态下用户只看得见自己。列出的是开发库里的账号（含人设摘要），
-    admin 开头的排在前面。
-
-    默认只列「有意义的身份」：测试跑出来的 `test-*` / `iso-*` / `anchor-*` 这些会淹掉下拉框，
-    想看全部传 `prefixes=all`。
-    """
-
-    patterns = None if prefixes.strip().lower() == "all" else [
-        f"{p.strip()}%" for p in prefixes.split(",") if p.strip()
-    ]
+@app.get("/api/personas/{persona_id}")
+async def get_persona(persona_id: int) -> Dict[str, Any]:
     async with db.pool().acquire() as conn:
-        work = await repo.get_work_by_slug(conn, work_slug)
-        rows = await conn.fetch(
-            """
-            SELECT u.id, u.external_id, u.display_name,
-                   p.name AS persona_name, p.identity AS persona_identity
-            FROM users u
-            LEFT JOIN user_personas p ON p.user_id = u.id AND p.work_id = $2
-            WHERE $3::text[] IS NULL OR u.external_id LIKE ANY($3::text[])
-            ORDER BY (u.external_id LIKE 'admin%') DESC, u.id DESC
-            LIMIT $1
-            """,
-            limit,
-            work["id"] if work else None,
-            patterns,
+        persona = await repo.get_persona(conn, persona_id)
+        if persona is None:
+            raise NotFound("身份不存在")
+        return persona
+
+
+@app.put("/api/personas/{persona_id}")
+async def update_persona(persona_id: int, payload: PersonaUpdateRequest) -> Dict[str, Any]:
+    async with db.pool().acquire() as conn:
+        persona = await repo.update_persona(
+            conn,
+            persona_id,
+            name=payload.name,
+            identity=payload.identity,
+            background=payload.background,
+            appearance=payload.appearance,
+            speech_style=payload.speech_style,
+            free_note=payload.free_note,
         )
-    return [dict(r) for r in rows]
+        if persona is None:
+            raise NotFound("身份不存在")
+        return persona
 
 
 @app.get("/api/users/{user_id}/timeline")
@@ -270,11 +269,14 @@ async def create_session(payload: CreateSessionRequest) -> Dict[str, Any]:
         if missing:
             raise NotFound(f"角色不存在：{'、'.join(missing)}")
 
-        anchor = await repo.get_current_anchor(conn, payload.user_id, work["id"])
+        persona = await repo.get_persona(conn, payload.persona_id)
+        if persona is None:
+            raise NotFound("身份不存在")
+        anchor = await repo.get_current_anchor(conn, persona["user_id"], work["id"])
         title = payload.title or "、".join(c["name"] for c in characters)
         session = await repo.create_session(
             conn,
-            user_id=payload.user_id,
+            persona_id=payload.persona_id,
             work_id=work["id"],
             session_type=payload.session_type,
             title=title,
@@ -288,14 +290,14 @@ async def create_session(payload: CreateSessionRequest) -> Dict[str, Any]:
 
 @app.get("/api/sessions")
 async def list_sessions(
-    user_id: int, work_slug: Optional[str] = Query(None)
+    persona_id: int, work_slug: Optional[str] = Query(None)
 ) -> List[Dict[str, Any]]:
     async with db.pool().acquire() as conn:
         work_id = None
         if work_slug:
             work = await repo.get_work_by_slug(conn, work_slug)
             work_id = work["id"] if work else None
-        return await repo.list_sessions(conn, user_id, work_id)
+        return await repo.list_sessions(conn, persona_id, work_id)
 
 
 @app.get("/api/sessions/{session_id}")
@@ -348,9 +350,9 @@ async def prompt_preview(
         if anchor is None:
             raise NotFound("作品没有可用的时间锚点")
         states = await repo.get_character_states(conn, anchor["id"], character_ids)
-        persona = await repo.get_persona(conn, session["user_id"], session["work_id"])
+        persona = await repo.get_persona(conn, session["persona_id"])
         user_relation = await repo.get_user_character_relation(
-            conn, session["user_id"], target["id"]
+            conn, session["persona_id"], target["id"]
         )
         peer_relations = await repo.list_effective_relationships(
             conn,
