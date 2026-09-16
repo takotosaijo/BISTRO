@@ -27,6 +27,7 @@ from app.schemas import (
 from app.services import chat as chat_service
 from app.services.relation_parse import sync_declared_relations
 from app.services.relation_evolve import evolve_relations
+from app.services.summarize import refresh_anchor_summary
 
 LAB_PAGE = Path(__file__).resolve().parent / "static" / "lab.html"
 
@@ -373,6 +374,19 @@ async def prompt_preview(
         declared_relations = await repo.list_declared_relations(
             conn, session["persona_id"], character_ids, anchor_seq=anchor["seq"]
         )
+        # 让预览与真正送进模型的 prompt 一致：更早章节的提要（F22）也要按同一个窗口规则取
+        history = await repo.list_messages(
+            conn,
+            session_id,
+            limit=settings.max_history_messages,
+            up_to_anchor_seq=anchor["seq"],
+        )
+        summaries = await repo.list_anchor_summaries(
+            conn,
+            session_id,
+            anchor["seq"],
+            window_start_seq=history[0]["seq"] if history else None,
+        )
         from app.prompt import PromptContext, build_system_prompt
 
         ctx = PromptContext(
@@ -385,6 +399,7 @@ async def prompt_preview(
             peers=characters,
             peer_relations=peer_relations,
             declared_relations=declared_relations,
+            summaries=summaries,
         )
         return {
             "session_id": session_id,
@@ -411,7 +426,7 @@ def _sse(event: str, data: Dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-async def _evolve_relations_later(
+async def _post_turn_work(
     session: Dict[str, Any],
     responder: Dict[str, Any],
     anchor: Dict[str, Any],
@@ -419,7 +434,11 @@ async def _evolve_relations_later(
     reply_text: str,
     message_id: int,
 ) -> None:
-    """流式回复结束后再跑关系演化，自己拿一个连接（失败不影响对话）。"""
+    """流式回复结束后再跑增值步骤：关系演化（F14）+ 章节提要（F22）。
+
+    两件事各自独立——一个失败不许拖累另一个，都失败也不影响对话本身。
+    两件都放在 `done` 之后跑：不能让出字等它们（真实模型各要一次调用）。
+    """
 
     try:
         async with db.pool().acquire() as conn:
@@ -432,7 +451,14 @@ async def _evolve_relations_later(
                 reply_text=reply_text,
                 message_id=message_id,
             )
-    except Exception:  # noqa: BLE001 - 演化是增值步骤
+    except Exception:  # noqa: BLE001 - 增值步骤
+        pass
+    try:
+        async with db.pool().acquire() as conn:
+            await refresh_anchor_summary(
+                conn, session=session, anchor=anchor, responder=responder
+            )
+    except Exception:  # noqa: BLE001 - 增值步骤
         pass
 
 
@@ -491,7 +517,7 @@ async def send_message_stream(
             )
             # 关系演化放在回复之后跑：真实模型要读一轮对话，不能让出字等它
             background.add_task(
-                _evolve_relations_later,
+                _post_turn_work,
                 prepared.session,
                 prepared.responder,
                 prepared.anchor,

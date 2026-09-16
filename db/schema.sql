@@ -466,6 +466,8 @@ CREATE TABLE memories (
   embedding         vector(1024),
   salience          smallint NOT NULL DEFAULT 50 CHECK (salience BETWEEN 0 AND 100),
   source_message_id bigint REFERENCES messages(id) ON DELETE SET NULL,
+  learned_at_anchor_id bigint REFERENCES timeline_anchors(id) ON DELETE SET NULL,
+                                        -- 这条记忆是「在哪一章」知道的（F22 起记忆也按锚点分层）
   last_recalled_at  timestamptz,
   recall_count      int NOT NULL DEFAULT 0,
   created_at        timestamptz NOT NULL DEFAULT now(),
@@ -484,14 +486,24 @@ CREATE INDEX memories_embedding_idx
   ON memories USING hnsw (embedding vector_cosine_ops);
 
 CREATE TABLE session_summaries (
-  id         bigserial PRIMARY KEY,
-  session_id bigint NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  up_to_seq  int NOT NULL,
-  summary    text NOT NULL,
-  embedding  vector(1024),
-  created_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (session_id, up_to_seq)
+  id               bigserial PRIMARY KEY,
+  session_id       bigint NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  anchor_id        bigint NOT NULL REFERENCES timeline_anchors(id) ON DELETE CASCADE,
+  covered_from_seq int NOT NULL,      -- 这一段从会话内第几条消息起
+  covered_to_seq   int NOT NULL,      -- 覆盖到第几条
+  summary          text NOT NULL,
+  embedding        vector(1024),
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  updated_at       timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (session_id, anchor_id)      -- 每章一条，随这一章的对话滚动刷新
 );
+
+COMMENT ON TABLE session_summaries IS
+  '会话摘要按**时间锚点**分段：每章一条（F22）。prompt 只取覆盖范围落在最近窗口之外的那些当'
+  '「前情提要」——原话还在窗口里的部分不再摘要一遍，免得同一段事被说两遍。';
+COMMENT ON COLUMN session_summaries.covered_from_seq IS
+  '摘要覆盖范围的下界。判断「这段摘要有没有原话还在窗口里」要用它，'
+  '只有 covered_to_seq 的话，窗口跨过章节边界时会算错。';
 
 -- ---------------------------------------------------------------------------
 -- 10. 关系解析视图：用户覆盖优先，并受时间线约束

@@ -772,6 +772,108 @@ async def lock_session(conn: asyncpg.Connection, session_id: int) -> None:
     await conn.execute("SELECT id FROM sessions WHERE id = $1 FOR UPDATE", session_id)
 
 
+async def list_session_messages_at_anchor(
+    conn: asyncpg.Connection, session_id: int, anchor_id: int
+) -> List[Dict[str, Any]]:
+    """这个会话在**这一章**说过的话——摘要的原料（F22）。
+
+    摘要按锚点分段，所以原料也只能取这一段：把别的章节的话混进来，
+    摘要就会写成「跨时间点的事」，而角色在那个时间点根本不该知道。
+    """
+
+    return rows_to_dicts(
+        await conn.fetch(
+            """
+            SELECT id, seq, sender_kind, sender_id, message_kind, content, created_at
+            FROM messages
+            WHERE session_id = $1 AND anchor_id = $2
+              AND message_kind IN ('text', 'voice', 'narration')
+            ORDER BY seq
+            """,
+            session_id,
+            anchor_id,
+        )
+    )
+
+
+async def get_anchor_summary(
+    conn: asyncpg.Connection, session_id: int, anchor_id: int
+) -> Optional[Dict[str, Any]]:
+    row = await conn.fetchrow(
+        """
+        SELECT id, session_id, anchor_id, covered_from_seq, covered_to_seq, summary, updated_at
+        FROM session_summaries WHERE session_id = $1 AND anchor_id = $2
+        """,
+        session_id,
+        anchor_id,
+    )
+    return dict(row) if row else None
+
+
+async def upsert_anchor_summary(
+    conn: asyncpg.Connection,
+    *,
+    session_id: int,
+    anchor_id: int,
+    covered_from_seq: int,
+    covered_to_seq: int,
+    summary: str,
+) -> Dict[str, Any]:
+    """每章一条摘要，随这一章的对话滚动刷新（F22）。"""
+
+    row = await conn.fetchrow(
+        """
+        INSERT INTO session_summaries
+          (session_id, anchor_id, covered_from_seq, covered_to_seq, summary)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (session_id, anchor_id) DO UPDATE
+          SET covered_from_seq = EXCLUDED.covered_from_seq,
+              covered_to_seq   = EXCLUDED.covered_to_seq,
+              summary          = EXCLUDED.summary,
+              updated_at       = now()
+        RETURNING id, session_id, anchor_id, covered_from_seq, covered_to_seq, summary
+        """,
+        session_id,
+        anchor_id,
+        covered_from_seq,
+        covered_to_seq,
+        summary,
+    )
+    return dict(row)
+
+
+async def list_anchor_summaries(
+    conn: asyncpg.Connection,
+    session_id: int,
+    up_to_anchor_seq: int,
+    window_start_seq: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """≤ 当前锚点的会话摘要，按时间顺序返回（F22）。
+
+    `window_start_seq` 是「送进 prompt 的最近窗口」的起点：覆盖范围整段落在窗口里的摘要
+    不用再给——同一段事说两遍（一遍原文、一遍提要）只会让角色绕圈子。
+    只要它**有一段**在窗口之外（`covered_from_seq` 更早），整条摘要就还给。
+    """
+
+    return rows_to_dicts(
+        await conn.fetch(
+            """
+            SELECT s.id, s.anchor_id, s.covered_from_seq, s.covered_to_seq, s.summary,
+                   a.seq AS anchor_seq, a.chapter_label, a.name AS anchor_name
+            FROM session_summaries s
+            JOIN timeline_anchors a ON a.id = s.anchor_id
+            WHERE s.session_id = $1
+              AND a.seq <= $2
+              AND ($3::int IS NULL OR s.covered_from_seq < $3)
+            ORDER BY a.seq
+            """,
+            session_id,
+            up_to_anchor_seq,
+            window_start_seq,
+        )
+    )
+
+
 async def append_message(
     conn: asyncpg.Connection,
     session_id: int,

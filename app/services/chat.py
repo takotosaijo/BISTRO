@@ -17,6 +17,7 @@ from app.errors import CharacterUnavailable, DomainError, NotFound
 from app.prompt import PromptContext, build_chat_messages, build_system_prompt
 from app.providers.base import LLMProvider
 from app.services.relation_evolve import evolve_relations
+from app.services.summarize import refresh_anchor_summary
 
 MAX_CONTENT_LENGTH = 2000
 
@@ -37,6 +38,24 @@ class PreparedTurn:
 def _require(condition: bool, message: str) -> None:
     if not condition:
         raise DomainError(message)
+
+
+async def _load_summaries(
+    conn: asyncpg.Connection,
+    session_id: int,
+    anchor: Dict[str, Any],
+    history: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """更早各章的会话提要（F22）。
+
+    窗口已经盖住的那部分不再给——同一段事说两遍（原文 + 提要）只会让角色绕圈子。
+    只取 ≤ 当前锚点的：往后拨时间线时，未来的提要不许出现。
+    """
+
+    window_start_seq = history[0]["seq"] if history else None
+    return await repo.list_anchor_summaries(
+        conn, session_id, anchor["seq"], window_start_seq=window_start_seq
+    )
 
 
 async def _load_peers_relations(
@@ -178,6 +197,7 @@ async def prepare_turn(
         limit=settings.max_history_messages,
         up_to_anchor_seq=anchor["seq"],
     )
+    ctx.summaries = await _load_summaries(conn, session_id, anchor, history)
     messages = build_chat_messages(
         ctx, history, responder_id=responder["id"], name_by_id={c["id"]: c["name"] for c in characters}
     )
@@ -256,6 +276,12 @@ async def chat_once(
         user_text=prepared.user_message["content"],
         reply_text=reply_text,
         message_id=reply["id"],
+    )
+    await refresh_anchor_summary(
+        conn,
+        session=prepared.session,
+        anchor=prepared.anchor,
+        responder=prepared.responder,
     )
     return {
         "user_message": prepared.user_message,

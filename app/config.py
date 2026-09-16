@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     # 送进 prompt 的最近消息条数（不含本轮）
     max_history_messages: int = 24
 
+    # F22：每攒够这么多条消息，就把这一章重压成一条摘要（每 6 条一次模型调用，
+    # 不是每轮一次——摘要是「长程压缩」，不值得每句话都重算）
+    summary_every: int = 6
+
     default_work_slug: str = "shuihu-100"
 
     @property

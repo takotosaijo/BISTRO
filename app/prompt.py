@@ -39,6 +39,7 @@ class PromptContext:
     peers: List[Dict[str, Any]] = field(default_factory=list)
     peer_relations: List[Dict[str, Any]] = field(default_factory=list)
     last_talk_anchor: Optional[Dict[str, Any]] = None
+    summaries: List[Dict[str, Any]] = field(default_factory=list)  # F22：更早各章的提要
 
     @property
     def user_name(self) -> str:
@@ -182,6 +183,21 @@ def build_system_prompt(ctx: PromptContext) -> str:
         if not rel.get("is_known_to_target", True):
             lines.append("  这只是你心里的想法，对方并不知道。")
     lines.append("")
+
+    if ctx.summaries:
+        # F22：更早章节的话用**提要**带过来（原文超出窗口就没了）。
+        # 只给到「当前锚点及之前」——往后拨时间线时，未来的提要不许出现。
+        lines.append("# 你和这个人更早说过的话")
+        lines.append(
+            "下面是更早的时间点里你们说过的话，压成了提要；只有提要里的这些你还记得，"
+            "更细的细节想不起来了。"
+        )
+        for summary in ctx.summaries:
+            label = summary.get("chapter_label") or ""
+            title = summary.get("anchor_name") or ""
+            head = f"{label}《{title}》" if title else label
+            lines.append(f"- {head}：{summary.get('summary', '')}")
+        lines.append("")
 
     lines.append("# 你知道什么")
     lines.append(
