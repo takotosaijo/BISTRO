@@ -12,7 +12,7 @@ DB_URL   ?= postgresql://postgres:123456@127.0.0.1:5433/bistro
 BISTRO_DATABASE_URL ?= $(DB_URL)
 export BISTRO_DATABASE_URL
 
-.PHONY: help setup db db-reset demo run test check secrets eval status
+.PHONY: help setup db db-reset demo admin run test check secrets eval status
 
 help: ## 列出所有可用命令
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  \033[36m%-9s\033[0m %s\n", $$1, $$2}'
@@ -29,6 +29,9 @@ db-reset: ## 删库重建，会清空数据
 
 demo: ## 造演示数据：张三 × 林冲 × 第十回
 	$(PY) scripts/bootstrap_demo.py
+
+admin: ## 造开发用身份：路人 / 女儿 / 旧相识，试验台可切换
+	$(PY) scripts/bootstrap_admin.py
 
 run: ## 起服务 http://127.0.0.1:8002（改端口：make run PORT=xxxx）
 	$(UVICORN) app.main:app --reload --port $(PORT)

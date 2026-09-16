@@ -158,6 +158,55 @@ async def set_persona(user_id: int, payload: PersonaRequest) -> Dict[str, Any]:
         return {"ok": True, "persona": await repo.get_persona(conn, user_id, work["id"])}
 
 
+@app.get("/api/users/{user_id}/persona")
+async def get_persona(user_id: int, work_slug: str = Query("shuihu-100")) -> Dict[str, Any]:
+    async with db.pool().acquire() as conn:
+        work = await repo.get_work_by_slug(conn, work_slug)
+        if work is None:
+            raise NotFound("作品不存在")
+        return {"work": work["slug"], "persona": await repo.get_persona(conn, user_id, work["id"])}
+
+
+@app.get("/api/dev/users")
+async def list_dev_users(
+    work_slug: str = Query("shuihu-100"),
+    limit: int = Query(20, ge=1, le=100),
+    prefixes: str = Query(
+        "admin,lab-ui,demo",
+        description="external_id 前缀白名单，逗号分隔；用 all 列出全部账号",
+    ),
+) -> List[Dict[str, Any]]:
+    """开发用：试验台的「以谁的身份进入」需要一份可选账号列表。
+
+    不是产品接口——正式形态下用户只看得见自己。列出的是开发库里的账号（含人设摘要），
+    admin 开头的排在前面。
+
+    默认只列「有意义的身份」：测试跑出来的 `test-*` / `iso-*` / `anchor-*` 这些会淹掉下拉框，
+    想看全部传 `prefixes=all`。
+    """
+
+    patterns = None if prefixes.strip().lower() == "all" else [
+        f"{p.strip()}%" for p in prefixes.split(",") if p.strip()
+    ]
+    async with db.pool().acquire() as conn:
+        work = await repo.get_work_by_slug(conn, work_slug)
+        rows = await conn.fetch(
+            """
+            SELECT u.id, u.external_id, u.display_name,
+                   p.name AS persona_name, p.identity AS persona_identity
+            FROM users u
+            LEFT JOIN user_personas p ON p.user_id = u.id AND p.work_id = $2
+            WHERE $3::text[] IS NULL OR u.external_id LIKE ANY($3::text[])
+            ORDER BY (u.external_id LIKE 'admin%') DESC, u.id DESC
+            LIMIT $1
+            """,
+            limit,
+            work["id"] if work else None,
+            patterns,
+        )
+    return [dict(r) for r in rows]
+
+
 @app.get("/api/users/{user_id}/timeline")
 async def get_timeline(user_id: int, work_slug: str = Query("shuihu-100")) -> Dict[str, Any]:
     async with db.pool().acquire() as conn:

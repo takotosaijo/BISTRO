@@ -32,6 +32,9 @@
   .row { display: flex; gap: 6px; margin-top: 6px; }
   input[type=text] { width: 100%; padding: 6px 8px; border: 1px solid var(--line);
                      background: var(--card); color: var(--ink); font: inherit; font-size: 13px; }
+  select { width: 100%; padding: 6px 8px; border: 1px solid var(--line);
+           background: var(--card); color: var(--ink); font: inherit; font-size: 13px; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 4px; line-height: 1.45; }
   button { font: inherit; font-size: 13px; padding: 6px 10px; cursor: pointer;
            border: 1px solid var(--line); background: var(--card); color: var(--ink); }
   button:hover { border-color: var(--accent); color: var(--accent); }
@@ -76,6 +79,12 @@
 
 <main>
   <aside>
+    <div class="block">
+      <h2>以谁的身份进入</h2>
+      <select id="devUser"></select>
+      <div class="hint" id="identityHint">—</div>
+    </div>
+
     <div class="block">
       <h2>时间线</h2>
       <input id="slider" type="range" min="0" max="11" step="1" value="0">
@@ -142,21 +151,56 @@ async function init() {
   const health = await api("/api/health");
   $("provider").textContent = health.llm_provider + " / " + health.llm_model;
 
-  // 固定 external_id：刷新页面不丢人设与时间线
-  const user = await post("/api/users", { external_id: "lab-ui", display_name: "试验台用户" });
-  state.userId = user.id;
-
   state.anchors = await api("/api/works/" + WORK + "/anchors");
   $("slider").max = String(state.anchors.length - 1);
 
-  const timeline = await api("/api/users/" + state.userId + "/timeline?work_slug=" + WORK);
+  await loadIdentities();
+  const preferred = localStorage.getItem("lab.identity") || "admin";
+  if ([...$("devUser").options].some((o) => o.value === preferred)) $("devUser").value = preferred;
+  await switchIdentity($("devUser").value);
+}
+
+async function loadIdentities() {
+  const users = await api("/api/dev/users");
+  const select = $("devUser");
+  select.innerHTML = "";
+  users.forEach((u) => {
+    const option = document.createElement("option");
+    option.value = u.external_id;
+    option.textContent = u.external_id + "（" + (u.persona_name || u.display_name || "无") + "）";
+    select.appendChild(option);
+  });
+  select.onchange = () => switchIdentity(select.value).catch((e) => fail(e.message));
+}
+
+async function switchIdentity(externalId) {
+  fail("");
+  const user = await post("/api/users", { external_id: externalId, display_name: externalId });
+  state.userId = user.id;
+  localStorage.setItem("lab.identity", externalId);
+
+  const persona = await api("/api/users/" + user.id + "/persona?work_slug=" + WORK);
+  const me = persona.persona || {};
+  $("personaName").value = me.name || "张三";
+  $("personaIdentity").value = me.identity || "";
+  $("identityHint").textContent = me.identity || "（还没写人设）";
+
+  const timeline = await api("/api/users/" + user.id + "/timeline?work_slug=" + WORK);
   const current = timeline.current;
   state.index = Math.max(0, state.anchors.findIndex((a) => current && a.id === current.id));
   $("slider").value = String(state.index);
-
-  $("personaName").value = "张三";
-  $("personaIdentity").value = "东京城里开酒铺的掌柜";
   renderAnchor();
+
+  // 换人 = 换一整套上下文：清掉选中的角色、会话与 prompt 面板
+  state.slug = null;
+  state.session = 0;
+  $("who").textContent = "还没有选中角色";
+  $("where").textContent = "";
+  $("log").innerHTML = "";
+  $("prompt").textContent = "选中角色后显示。";
+  $("text").disabled = true;
+  $("send").disabled = true;
+  $("reset").disabled = true;
   await loadCharacters();
 }
 
