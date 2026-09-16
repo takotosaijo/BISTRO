@@ -39,9 +39,6 @@ CREATE TYPE character_availability AS ENUM ('introduced', 'not_introduced', 'hid
 -- 角色对某事件的知情程度（用于派生知识边界）
 CREATE TYPE event_knowledge AS ENUM ('witnessed', 'heard', 'rumored', 'unaware');
 
--- 用户与角色的关系阶段（正向递进，敌对由 attitude 数值表达）
-CREATE TYPE relation_stage AS ENUM ('stranger', 'acquaintance', 'familiar', 'confidant', 'intimate', 'lover');
-
 -- 记忆作用域
 CREATE TYPE memory_scope AS ENUM ('session', 'character');
 
@@ -264,11 +261,9 @@ CREATE TABLE relationship_edges (
   from_id       bigint NOT NULL,
   to_kind       actor_kind NOT NULL,
   to_id         bigint NOT NULL,
-  label         text NOT NULL,          -- '结义兄弟' / '血仇' / '暗中倾慕'
-  closeness     smallint NOT NULL DEFAULT 0 CHECK (closeness BETWEEN -100 AND 100),
-  trust         smallint NOT NULL DEFAULT 0 CHECK (trust BETWEEN -100 AND 100),
-  wariness      smallint NOT NULL DEFAULT 0 CHECK (wariness BETWEEN -100 AND 100),
-  affection     smallint NOT NULL DEFAULT 0 CHECK (affection BETWEEN -100 AND 100),
+  -- 关系强度不用数值表达（2026-09-16 取消好感度）：说什么关系，全看 label 与生效区间。
+  -- 变化 = 插一条新边（valid_from=变化发生的锚点），旧边补 valid_to——滑回去旧说法自动生效。
+  label         text NOT NULL,          -- '结义兄弟' / '血仇' / '我认下的女儿'
   private_note  text,                   -- 只有 from 自己知道的内心话
   is_known_to_target boolean NOT NULL DEFAULT true,  -- to 是否意识到这层关系
   valid_from_anchor_id bigint REFERENCES timeline_anchors(id) ON DELETE SET NULL,  -- NULL = 自始
@@ -303,16 +298,16 @@ CREATE UNIQUE INDEX relationship_edges_canon_uniq
   WHERE source = 'canon';
 
 -- 用户边：允许同一对关系在时间线上分段覆盖（第2回结义、第40回反目）
-CREATE UNIQUE INDEX relationship_edges_user_uniq
-  ON relationship_edges (user_id, from_kind, from_id, to_kind, to_id, (COALESCE(valid_from_anchor_id, 0)))
+CREATE UNIQUE INDEX relationship_edges_persona_uniq
+  ON relationship_edges (persona_id, from_kind, from_id, to_kind, to_id, (COALESCE(valid_from_anchor_id, 0)))
   WHERE source = 'user';
 
 CREATE INDEX relationship_edges_from_idx
   ON relationship_edges (work_id, from_kind, from_id);
 CREATE INDEX relationship_edges_to_idx
   ON relationship_edges (work_id, to_kind, to_id);
-CREATE INDEX relationship_edges_user_idx
-  ON relationship_edges (user_id) WHERE source = 'user';
+CREATE INDEX relationship_edges_persona_idx
+  ON relationship_edges (persona_id) WHERE source = 'user';
 
 -- ---------------------------------------------------------------------------
 -- 6. 用户 ↔ 角色 的互动累积（跨时间线延续）
@@ -322,13 +317,10 @@ CREATE TABLE user_character_relations (
   persona_id       bigint NOT NULL,
   user_id          bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,  -- 冗余但被复合外键锁死
   character_id     bigint NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
-  stage            relation_stage NOT NULL DEFAULT 'stranger',
-  char_affinity    smallint NOT NULL DEFAULT 0 CHECK (char_affinity BETWEEN -100 AND 100),  -- 角色对用户的好感
-  char_trust       smallint NOT NULL DEFAULT 0 CHECK (char_trust BETWEEN -100 AND 100),
-  char_wariness    smallint NOT NULL DEFAULT 0 CHECK (char_wariness BETWEEN -100 AND 100),
-  user_stance      text,        -- 用户对角色的态度（自然语言，进角色 prompt）
+  -- 这张表只记「经历过什么」，不记「多亲近」：好感度与恋爱线已取消（2026-09-16）。
+  -- 「现在是什么关系」由 relationship_edges 的边版本表达。
   first_met_anchor_id bigint REFERENCES timeline_anchors(id) ON DELETE SET NULL,
-  milestones       jsonb NOT NULL DEFAULT '[]'::jsonb,   -- 已解锁的里程碑事件
+  milestones       jsonb NOT NULL DEFAULT '[]'::jsonb,   -- 已发生的里程碑（相认 / 结拜 / 翻脸…）
   interaction_count int NOT NULL DEFAULT 0,
   last_interaction_at timestamptz,
   updated_at       timestamptz NOT NULL DEFAULT now(),
@@ -348,16 +340,18 @@ CREATE TRIGGER user_character_relations_updated_at
 -- 关系变化审计：可解释「他为什么突然冷淡了」
 CREATE TABLE relationship_changes (
   id            bigserial PRIMARY KEY,
+  persona_id    bigint NOT NULL,
   user_id       bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   character_id  bigint NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
   message_id    bigint,        -- 触发变化的消息（FK 在 messages 建表后补）
-  affinity_delta smallint NOT NULL DEFAULT 0,
-  trust_delta   smallint NOT NULL DEFAULT 0,
-  wariness_delta smallint NOT NULL DEFAULT 0,
-  stage_before  relation_stage,
-  stage_after   relation_stage,
+  anchor_id     bigint REFERENCES timeline_anchors(id) ON DELETE SET NULL,  -- 变化发生在哪一回
+  direction     text NOT NULL CHECK (direction IN ('user_to_character', 'character_to_user')),
+  label_before  text,
+  label_after   text NOT NULL,
   reason        text,
-  created_at    timestamptz NOT NULL DEFAULT now()
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (persona_id, user_id) REFERENCES personas(id, user_id)
+    ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 
 CREATE INDEX relationship_changes_user_idx
@@ -526,10 +520,6 @@ candidates AS (
          e.to_kind,
          e.to_id,
          e.label,
-         e.closeness,
-         e.trust,
-         e.wariness,
-         e.affection,
          e.private_note,
          e.is_known_to_target,
          e.source,
@@ -553,8 +543,7 @@ candidates AS (
 SELECT DISTINCT ON (persona_id, from_kind, from_id, to_kind, to_id)
        persona_id, user_id, work_id, anchor_id,
        from_kind, from_id, to_kind, to_id,
-       label, closeness, trust, wariness, affection,
-       private_note, is_known_to_target,
+       label, private_note, is_known_to_target,
        source AS effective_source, override_scope,
        valid_from_anchor_id, valid_to_anchor_id
 FROM candidates
@@ -573,10 +562,6 @@ SELECT s.id AS session_id,
        r.from_id AS from_character_id,
        r.to_id   AS to_character_id,
        r.label,
-       r.closeness,
-       r.trust,
-       r.wariness,
-       r.affection,
        r.private_note,
        r.is_known_to_target,
        r.effective_source

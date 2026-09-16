@@ -79,11 +79,11 @@ BEGIN
   -- 4. 用户覆盖优先于原著
   INSERT INTO relationship_edges (
     work_id, persona_id, source, from_kind, from_id, to_kind, to_id,
-    label, closeness, trust, wariness, affection,
+    label,
     valid_from_anchor_id, override_scope
   ) VALUES (
     v_work, v_persona, 'user', 'character', v_lchong, 'character', v_gaoqiu,
-    '暗中结盟', 50, 40, 20, 10, v_anchor3, 'from_here'
+    '暗中结盟', v_anchor3, 'from_here'
   );
 
   SELECT label, effective_source INTO v_label, v_src

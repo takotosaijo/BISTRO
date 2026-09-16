@@ -30,10 +30,6 @@ class DeclaredRelation:
     user_label: str          # 用户眼里的角色：「他是我爹」
     character_label: str     # 角色眼里的用户：「不认得这个姑娘」
     character_knows: bool    # 这个角色一开始是否认得这个身份
-    closeness: int = 0
-    trust: int = 0
-    wariness: int = 0
-    affection: int = 0
     user_stance: Optional[str] = None   # 用户的态度原话，进 prompt
     reason: Optional[str] = None
 
@@ -42,8 +38,7 @@ PARSE_SYSTEM_PROMPT = """\
 你在读一个人给自己写的「我在这个故事里是谁」，判断他与指定小说角色之间的关系。
 只输出 JSON，不要任何解释文字。格式：
 {"relations":[{"character":"林冲","user_view":"他是我爹","character_view":"不认得这个姑娘",
-"character_knows":false,"closeness":60,"trust":50,"wariness":0,"affection":70,
-"user_stance":"我是他失散多年的女儿，想认下他","reason":"她自称私生女"}]}
+"character_knows":false,"user_stance":"我是他失散多年的女儿，想认下他","reason":"她自称私生女"}]}
 
 规则：
 1. 只为自述里**能推出来**的角色输出条目。推不出来就别写（例如自述只说自己是酒铺掌柜、
@@ -54,8 +49,7 @@ PARSE_SYSTEM_PROMPT = """\
      「不认得这个姑娘，她自称是你的骨肉」「当年未及提亲就出了事的旧相识，如今寻了来」。
    两边可以完全不同：写「私生女」时，用户认得他，而他不认得用户。
 3. character_knows：这个角色一开场是否认得这个身份。
-4. closeness/trust/wariness/affection 取值 -100..100，按常识给：父女、旧情人这类给高值，
-   陌生人给 0。wariness 是戒备。
+4. 不要用数值描述关系亲疏（关系强度不用数字表达），只用词。
 5. 不要编造自述里没有的关系，也不要引入原著结局。
 """
 
@@ -108,23 +102,11 @@ def parse_relations_json(text: str) -> List[DeclaredRelation]:
                 user_label=str(item.get("user_view") or "").strip() or "认得他",
                 character_label=str(item.get("character_view") or "").strip() or "认得此人",
                 character_knows=bool(item.get("character_knows", True)),
-                closeness=_clamp(item.get("closeness")),
-                trust=_clamp(item.get("trust")),
-                wariness=_clamp(item.get("wariness")),
-                affection=_clamp(item.get("affection")),
                 user_stance=(item.get("user_stance") or None),
                 reason=(item.get("reason") or None),
             )
         )
     return out
-
-
-def _clamp(value: Any) -> int:
-    try:
-        number = int(value)
-    except (TypeError, ValueError):
-        return 0
-    return max(-100, min(100, number))
 
 
 class MockRelationParser:
@@ -152,10 +134,6 @@ class MockRelationParser:
                     user_label="他（她）是我的血亲长辈",
                     character_label="并不认得这个年轻人，他自称是你的骨肉",
                     character_knows=False,
-                    closeness=70,
-                    trust=60,
-                    wariness=10,
-                    affection=80,
                     user_stance="我是来认亲的",
                     reason="自述里提到血缘关系",
                 )
@@ -168,10 +146,6 @@ class MockRelationParser:
                     user_label="他是我当年的旧相识",
                     character_label="当年未及提亲就出了事的旧相识，如今寻了来",
                     character_knows=True,
-                    closeness=55,
-                    trust=50,
-                    wariness=20,
-                    affection=65,
                     user_stance="我寻了你很久",
                     reason="自述里提到旧日情分",
                 )
@@ -184,10 +158,6 @@ class MockRelationParser:
                     user_label="街坊邻居",
                     character_label="街坊邻居，见过几面",
                     character_knows=True,
-                    closeness=20,
-                    trust=20,
-                    wariness=10,
-                    affection=10,
                     reason="自述里提到同乡或邻舍",
                 )
                 for name in mentioned
@@ -239,10 +209,6 @@ async def sync_declared_relations(
             user_stance=relation.user_stance,
             character_label=relation.character_label,
             character_knows=relation.character_knows,
-            closeness=relation.closeness,
-            trust=relation.trust,
-            wariness=relation.wariness,
-            affection=relation.affection,
         )
         stored.append(
             {

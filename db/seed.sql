@@ -332,85 +332,82 @@ JOIN characters c ON c.work_id = w.id AND c.slug = v.char_slug;
 
 INSERT INTO relationship_edges (
   work_id, source, from_kind, from_id, to_kind, to_id,
-  label, closeness, trust, wariness, affection,
-  private_note, is_known_to_target, valid_from_anchor_id, valid_to_anchor_id
+  label, private_note, is_known_to_target, valid_from_anchor_id, valid_to_anchor_id
 )
 SELECT w.id, 'canon', 'character', cf.id, 'character', ct.id,
-       v.label, v.closeness, v.trust, v.wariness, v.affection,
-       v.private_note, v.is_known_to_target, vf.id, vt.id
+       v.label, v.private_note, v.is_known_to_target, vf.id, vt.id
 FROM works w
 CROSS JOIN
 (VALUES
   -- 林冲 ↔ 高俅：上下级 → 死仇
-  ('lin-chong', 'gao-qiu', '殿帅府麾下的禁军教头', -10, -20, 40, 0,
+  ('lin-chong', 'gao-qiu', '殿帅府麾下的禁军教头',
    '受他节制，不敢得罪', true, 1, 3),
-  ('gao-qiu', 'lin-chong', '麾下教头', 0, -10, 20, 0,
+  ('gao-qiu', 'lin-chong', '麾下教头',
    '不过是个教头，用得上便用', true, 1, 3),
-  ('lin-chong', 'gao-qiu', '不共戴天的死仇', -100, -100, 100, -100,
+  ('lin-chong', 'gao-qiu', '不共戴天的死仇',
    '此仇不报，枉为人', true, 3, NULL),
-  ('gao-qiu', 'lin-chong', '眼中钉，必欲除之', -90, -100, 80, -80,
+  ('gao-qiu', 'lin-chong', '眼中钉，必欲除之',
    '留他一日，本官一日不安', false, 3, NULL),
 
   -- 鲁智深 ↔ 林冲：第七回结义
-  ('lu-zhi-shen', 'lin-chong', '结义兄弟', 85, 90, 0, 70,
+  ('lu-zhi-shen', 'lin-chong', '结义兄弟',
    '林教头是个好汉子，洒家认他', true, 2, NULL),
-  ('lin-chong', 'lu-zhi-shen', '结义兄弟，救命之恩', 85, 95, 0, 70,
+  ('lin-chong', 'lu-zhi-shen', '结义兄弟，救命之恩',
    '若非哥哥相救，林冲早已死在野猪林', true, 2, NULL),
 
   -- 宋江 ↔ 武松：第二十三回柴进庄结义
-  ('song-jiang', 'wu-song', '结义兄弟', 80, 85, 0, 70,
+  ('song-jiang', 'wu-song', '结义兄弟',
    '武二郎是条汉子，可为梁山臂膀', true, 6, NULL),
-  ('wu-song', 'song-jiang', '结义兄弟，敬重', 75, 85, 10, 60,
+  ('wu-song', 'song-jiang', '结义兄弟，敬重',
    '公明哥哥待俺有恩，这份情俺记着', true, 6, 10),
   -- 招安是第七十一回才提起的事，此前不许出现在心里话里（与「招安之议未起」同源）
-  ('wu-song', 'song-jiang', '结义兄弟，敬重', 75, 85, 10, 60,
+  ('wu-song', 'song-jiang', '结义兄弟，敬重',
    '公明哥哥待俺有恩，只是招安之事，俺心里不服', true, 10, NULL),
 
   -- 宋江 ↔ 李逵：生死相随，直到那杯毒酒
-  ('li-kui', 'song-jiang', '哥哥，生死相随', 95, 100, 0, 95,
+  ('li-kui', 'song-jiang', '哥哥，生死相随',
    '哥哥叫俺死，俺也去', true, 8, NULL),
-  ('song-jiang', 'li-kui', '心腹兄弟', 90, 90, 0, 80,
+  ('song-jiang', 'li-kui', '心腹兄弟',
    '铁牛莽撞，却是最靠得住的一个', true, 8, NULL),
 
   -- 吴用 ↔ 宋江
-  ('wu-yong', 'song-jiang', '军师与寨主，托付终身', 75, 90, 0, 60,
+  ('wu-yong', 'song-jiang', '军师与寨主，托付终身',
    '公明哥哥的志向，便是在下的志向', true, 8, NULL),
-  ('song-jiang', 'wu-yong', '军师，倚为股肱', 80, 90, 0, 60,
+  ('song-jiang', 'wu-yong', '军师，倚为股肱',
    '学究胸中自有丘壑', true, 8, NULL),
 
   -- 卢俊义 ↔ 宋江：被赚上山，口服心不服
-  ('lu-jun-yi', 'song-jiang', '名义上的下属', 30, 40, 30, 20,
+  ('lu-jun-yi', 'song-jiang', '名义上的下属',
    '在下落草，全因他几个设计，这笔账记着', true, 10, NULL),
-  ('song-jiang', 'lu-jun-yi', '第二把交椅，礼敬有加', 70, 60, 30, 40,
+  ('song-jiang', 'lu-jun-yi', '第二把交椅，礼敬有加',
    '卢员外武艺盖世，名声也正，不可慢待', true, 10, NULL),
 
   -- 武松 ↔ 潘金莲：嫂叔 → 不共戴天（潘金莲死于第二十六回）
-  ('pan-jin-lian', 'wu-song', '叔叔，暗生情意', 20, 0, 60, 70,
+  ('pan-jin-lian', 'wu-song', '叔叔，暗生情意',
    '这等英雄，才配得上奴家，偏偏是那三寸丁的兄弟', false, 6, 7),
-  ('wu-song', 'pan-jin-lian', '嫂嫂，本分相待', 0, 10, 40, 0,
+  ('wu-song', 'pan-jin-lian', '嫂嫂，本分相待',
    '哥哥的娘子，礼数上不能差', true, 6, 7),
-  ('wu-song', 'pan-jin-lian', '杀兄之仇，已亲手了断', -100, -100, 100, -100,
+  ('wu-song', 'pan-jin-lian', '杀兄之仇，已亲手了断',
    '此人已被俺亲手杀死，提起来仍旧咬牙', true, 7, NULL),
 
   -- 西门庆 ↔ 潘金莲、王婆
-  ('xi-men-qing', 'pan-jin-lian', '苟合之情', 60, 20, 40, 60,
+  ('xi-men-qing', 'pan-jin-lian', '苟合之情',
    '不过图个新鲜，这妇人倒真有些意思', false, 6, 7),
-  ('wang-po', 'xi-men-qing', '主顾，摇钱树', 50, 30, 40, 40,
+  ('wang-po', 'xi-men-qing', '主顾，摇钱树',
    '大官人的银子，最好赚', true, 6, 7),
-  ('xi-men-qing', 'wang-po', '用得着的干娘', 30, 40, 50, 0,
+  ('xi-men-qing', 'wang-po', '用得着的干娘',
    '这老婆子贪财，靠得住，也防着点', true, 6, 7),
 
   -- 史进 ↔ 林冲等梁山同僚：早期并不相识，上了梁山才相熟
-  ('shi-jin', 'lu-zhi-shen', '江湖上久闻其名', 40, 50, 10, 30,
+  ('shi-jin', 'lu-zhi-shen', '江湖上久闻其名',
    '听说这和尚倒拔垂杨柳，真想会会', true, 10, NULL),
 
   -- 高俅 ↔ 梁山众人
-  ('gao-qiu', 'song-jiang', '草寇头子，招安谈判的对手', -40, -50, 60, -30,
+  ('gao-qiu', 'song-jiang', '草寇头子，招安谈判的对手',
    '这伙草寇，招安也是养虎', false, 11, NULL),
-  ('song-jiang', 'gao-qiu', '国贼，却不得不打交道', -80, -90, 90, -70,
+  ('song-jiang', 'gao-qiu', '国贼，却不得不打交道',
    '此人是梁山死敌，可招安之事绕不过他', true, 11, NULL)
-) AS v(from_slug, to_slug, label, closeness, trust, wariness, affection,
-       private_note, is_known_to_target, from_seq, to_seq)
+) AS v(from_slug, to_slug, label, private_note, is_known_to_target, from_seq, to_seq)
 JOIN characters cf ON cf.work_id = w.id AND cf.slug = v.from_slug
 JOIN characters ct ON ct.work_id = w.id AND ct.slug = v.to_slug
 JOIN timeline_anchors vf ON vf.work_id = w.id AND vf.seq = v.from_seq

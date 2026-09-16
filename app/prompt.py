@@ -17,15 +17,6 @@ from typing import Any, Dict, List, Optional
 
 from app.providers.base import ChatMessage
 
-STAGE_LABELS = {
-    "stranger": "素不相识",
-    "acquaintance": "相识",
-    "familiar": "熟识",
-    "confidant": "交心",
-    "intimate": "亲密",
-    "lover": "恋人",
-}
-
 WORLD_STATE_LABELS = {
     "梁山之主": "梁山之主",
     "梁山成型": "梁山局势",
@@ -54,34 +45,6 @@ class PromptContext:
         if self.persona and self.persona.get("name"):
             return str(self.persona["name"])
         return self.user_display_name or "这位朋友"
-
-
-def describe_attitude(
-    closeness: int, trust: int, wariness: int, affection: int
-) -> str:
-    parts: List[str] = []
-    if affection >= 60:
-        parts.append("心里有情意")
-    elif closeness >= 60:
-        parts.append("十分亲近")
-    elif closeness >= 20:
-        parts.append("还算亲近")
-    elif closeness <= -60:
-        parts.append("势同水火")
-    elif closeness <= -20:
-        parts.append("心里疏远")
-
-    if trust >= 60:
-        parts.append("深信不疑")
-    elif trust <= -60:
-        parts.append("半点不信")
-
-    if wariness >= 60:
-        parts.append("处处提防")
-    elif wariness >= 30:
-        parts.append("留着一手")
-
-    return "、".join(parts) if parts else "说不上亲疏"
 
 
 def render_world_state(world_state: Any) -> str:
@@ -199,19 +162,11 @@ def build_system_prompt(ctx: PromptContext) -> str:
                 lines.append(f"  他自己说过：{user_to_character['private_note']}")
         if character_to_user:
             lines.append(f"  你心里：{character_to_user['label']}")
-    elif relation:
-        stage = STAGE_LABELS.get(relation.get("stage"), "素不相识")
-        attitude = describe_attitude(
-            relation.get("char_affinity") or 0,
-            relation.get("char_trust") or 0,
-            relation.get("char_wariness") or 0,
-            0,
-        )
+    elif relation and (relation.get("interaction_count") or 0) > 0:
+        # 没有声明关系、但已经打过交道：只说经历过什么，不评价亲近程度（好感度已取消）
         lines.append(
-            f"- 对 {ctx.user_name}（{user_desc}）：你们如今是「{stage}」的关系，{attitude}。"
+            f"- 对 {ctx.user_name}（{user_desc}）：你们打过几次照面、说过些话，还谈不上什么交情。"
         )
-        if relation.get("user_stance"):
-            lines.append(f"  他自己说过：{relation['user_stance']}")
     else:
         lines.append(f"- 对 {ctx.user_name}（{user_desc}）：素不相识，初次照面。")
 
@@ -220,16 +175,8 @@ def build_system_prompt(ctx: PromptContext) -> str:
         peer = peer_by_id.get(rel["to_id"])
         if not peer or peer["id"] == c["id"]:
             continue
-        attitude = describe_attitude(
-            rel.get("closeness") or 0,
-            rel.get("trust") or 0,
-            rel.get("wariness") or 0,
-            rel.get("affection") or 0,
-        )
         source_note = "（这是你自己改的）" if rel.get("effective_source") == "user" else ""
-        lines.append(
-            f"- 对 {peer['name']}：{rel.get('label')}{source_note}，{attitude}。"
-        )
+        lines.append(f"- 对 {peer['name']}：{rel.get('label')}{source_note}。")
         if rel.get("private_note"):
             lines.append(f"  你心里想的是：{rel['private_note']}")
         if not rel.get("is_known_to_target", True):

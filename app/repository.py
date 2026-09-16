@@ -318,8 +318,7 @@ async def list_effective_relationships(
     return rows_to_dicts(
         await conn.fetch(
             """
-            SELECT from_id, to_id, label, closeness, trust, wariness, affection,
-                   private_note, is_known_to_target, effective_source,
+            SELECT from_id, to_id, label, private_note, is_known_to_target, effective_source,
                    valid_from_anchor_id, valid_to_anchor_id
             FROM v_effective_relationships
             WHERE persona_id = $1 AND work_id = $2
@@ -347,8 +346,7 @@ async def list_declared_relations(
     return rows_to_dicts(
         await conn.fetch(
             """
-            SELECT from_kind, from_id, to_kind, to_id, label, closeness, trust,
-                   wariness, affection, private_note, is_known_to_target,
+            SELECT from_kind, from_id, to_kind, to_id, label, private_note, is_known_to_target,
                    override_scope, valid_from_anchor_id
             FROM relationship_edges
             WHERE source = 'user'
@@ -395,10 +393,6 @@ async def replace_declared_relation(
     user_stance: Optional[str],
     character_label: str,
     character_knows: bool,
-    closeness: int,
-    trust: int,
-    wariness: int,
-    affection: int,
     override_scope: str = "always",
 ) -> None:
     """写入一对「用户↔角色」的声明边：用户怎么看他 + 他怎么看她。
@@ -439,25 +433,18 @@ async def replace_declared_relation(
             """
             INSERT INTO relationship_edges
               (work_id, persona_id, source, from_kind, from_id, to_kind, to_id, label,
-               closeness, trust, wariness, affection, private_note, is_known_to_target,
-               override_scope)
-            VALUES ($1, $2, 'user', 'user', $2, 'character', $3, $4,
-                    $5, $6, $7, $8, $9, $10, $11),
-                   ($1, $2, 'user', 'character', $3, 'user', $2, $12,
-                    $5, $6, $7, $8, NULL, true, $11)
+               private_note, is_known_to_target, override_scope)
+            VALUES ($1, $2, 'user', 'user', $2, 'character', $3, $4, $6, $7, $8),
+                   ($1, $2, 'user', 'character', $3, 'user', $2, $5, NULL, true, $8)
             """,
             work_id,
             persona_id,
             character_id,
             user_label,
-            closeness,
-            trust,
-            wariness,
-            affection,
+            character_label,
             user_stance,
             character_knows,
             override_scope,
-            character_label,
         )
 
 
@@ -469,8 +456,7 @@ async def get_user_character_relation(
     return row_to_dict(
         await conn.fetchrow(
             """
-            SELECT stage, char_affinity, char_trust, char_wariness, user_stance,
-                   milestones, interaction_count, last_interaction_at
+            SELECT milestones, interaction_count, last_interaction_at
             FROM user_character_relations
             WHERE persona_id = $1 AND character_id = $2
             """,
