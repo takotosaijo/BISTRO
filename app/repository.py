@@ -334,11 +334,15 @@ async def list_effective_relationships(
 
 
 async def list_declared_relations(
-    conn: asyncpg.Connection, persona_id: int, character_ids: Sequence[int]
+    conn: asyncpg.Connection,
+    persona_id: int,
+    character_ids: Sequence[int],
+    anchor_seq: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """这个身份与这些角色之间「用户声明」的关系边（用户↔角色，两个方向各一行）。
 
     F12 的产物：人设语义解析出来后落成这里的边，prompt 按它渲染。
+    F14 起按**当前锚点**取生效中的版本——滑回相变之前，旧说法自动重新生效。
     """
 
     if not character_ids:
@@ -346,21 +350,131 @@ async def list_declared_relations(
     return rows_to_dicts(
         await conn.fetch(
             """
-            SELECT from_kind, from_id, to_kind, to_id, label, private_note, is_known_to_target,
-                   override_scope, valid_from_anchor_id
-            FROM relationship_edges
-            WHERE source = 'user'
-              AND persona_id = $1
+            SELECT e.from_kind, e.from_id, e.to_kind, e.to_id, e.label, e.private_note,
+                   e.is_known_to_target, e.override_scope, e.valid_from_anchor_id,
+                   e.valid_to_anchor_id
+            FROM relationship_edges e
+            LEFT JOIN timeline_anchors vf ON vf.id = e.valid_from_anchor_id
+            LEFT JOIN timeline_anchors vt ON vt.id = e.valid_to_anchor_id
+            WHERE e.source = 'user'
+              AND e.persona_id = $1
               AND (
-                (from_kind = 'user' AND to_kind = 'character' AND to_id = ANY($2::bigint[]))
-                OR (from_kind = 'character' AND to_kind = 'user' AND from_id = ANY($2::bigint[]))
+                (e.from_kind = 'user' AND e.to_kind = 'character' AND e.to_id = ANY($2::bigint[]))
+                OR (e.from_kind = 'character' AND e.to_kind = 'user' AND e.from_id = ANY($2::bigint[]))
               )
-            ORDER BY from_kind, from_id
+              AND ($3::int IS NULL OR vf.seq IS NULL OR vf.seq <= $3)
+              AND ($3::int IS NULL OR vt.seq IS NULL OR vt.seq > $3)
+            ORDER BY e.from_kind, e.from_id, e.id DESC
             """,
             persona_id,
             list(character_ids),
+            anchor_seq,
         )
     )
+
+
+async def version_declared_relation(
+    conn: asyncpg.Connection,
+    *,
+    persona_id: int,
+    work_id: int,
+    character_id: int,
+    direction: str,
+    label_after: str,
+    anchor_id: int,
+    anchor_seq: int,
+    reason: Optional[str] = None,
+    message_id: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    """把某个方向的声明写成新版本（F14）。
+
+    旧边补 `valid_to` = 当前锚点，新边 `valid_from` = 当前锚点。滑回去旧说法自动生效。
+    同时往 relationship_changes 记一条审计，回答「他为什么突然改口认亲」。
+    """
+
+    if direction == "user_to_character":
+        match = "from_kind = 'user' AND to_kind = 'character' AND to_id = $2"
+        insert_kinds = ("user", persona_id, "character", character_id)
+    elif direction == "character_to_user":
+        match = "from_kind = 'character' AND to_kind = 'user' AND from_id = $2"
+        insert_kinds = ("character", character_id, "user", persona_id)
+    else:
+        raise ValueError(f"未知方向：{direction}")
+
+    async with conn.transaction():
+        current = await conn.fetchrow(
+            f"""
+            SELECT e.id, e.label FROM relationship_edges e
+            LEFT JOIN timeline_anchors vf ON vf.id = e.valid_from_anchor_id
+            LEFT JOIN timeline_anchors vt ON vt.id = e.valid_to_anchor_id
+            WHERE e.source = 'user' AND e.persona_id = $1 AND {match}
+              AND (vf.seq IS NULL OR vf.seq <= $3)
+              AND (vt.seq IS NULL OR vt.seq > $3)
+            ORDER BY e.id DESC LIMIT 1
+            """,
+            persona_id,
+            character_id,
+            anchor_seq,
+        )
+        label_before = current["label"] if current else None
+        if label_before == label_after:
+            return None  # 说法没变，不写新版本
+
+        if current:
+            await conn.execute(
+                "UPDATE relationship_edges SET valid_to_anchor_id = $2, updated_at = now() WHERE id = $1",
+                current["id"],
+                anchor_id,
+            )
+        # 同一锚点重复写入时，先把这一版的旧记录清掉
+        await conn.execute(
+            f"""
+            DELETE FROM relationship_edges
+            WHERE source = 'user' AND persona_id = $1 AND {match} AND valid_from_anchor_id = $3
+            """,
+            persona_id,
+            character_id,
+            anchor_id,
+        )
+        new_id = await conn.fetchval(
+            f"""
+            INSERT INTO relationship_edges
+              (work_id, persona_id, source, from_kind, from_id, to_kind, to_id, label,
+               is_known_to_target, override_scope, valid_from_anchor_id)
+            VALUES ($1, $2, 'user', $5, $6, $7, $8, $3, true, 'always', $4)
+            RETURNING id
+            """,
+            work_id,
+            persona_id,
+            label_after,
+            anchor_id,
+            *insert_kinds,
+        )
+        await conn.execute(
+            """
+            INSERT INTO relationship_changes
+              (persona_id, user_id, character_id, message_id, anchor_id, direction,
+               label_before, label_after, reason)
+            SELECT $1::bigint, p.user_id, $2::bigint, $3::bigint, $4::bigint, $5::text,
+                   $6::text, $7::text, $8::text
+            FROM personas p WHERE p.id = $1::bigint
+            """,
+            persona_id,
+            character_id,
+            message_id,
+            anchor_id,
+            direction,
+            label_before,
+            label_after,
+            reason,
+        )
+        return {
+            "edge_id": new_id,
+            "direction": direction,
+            "label_before": label_before,
+            "label_after": label_after,
+            "reason": reason,
+        }
 
 
 async def list_persona_declarations(

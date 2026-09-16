@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from fastapi import FastAPI, Query, Request
+from fastapi import BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
@@ -25,6 +26,7 @@ from app.schemas import (
 )
 from app.services import chat as chat_service
 from app.services.relation_parse import sync_declared_relations
+from app.services.relation_evolve import evolve_relations
 
 LAB_PAGE = Path(__file__).resolve().parent / "static" / "lab.html"
 
@@ -369,7 +371,7 @@ async def prompt_preview(
             to_ids=character_ids,
         )
         declared_relations = await repo.list_declared_relations(
-            conn, session["persona_id"], character_ids
+            conn, session["persona_id"], character_ids, anchor_seq=anchor["seq"]
         )
         from app.prompt import PromptContext, build_system_prompt
 
@@ -408,8 +410,35 @@ def _sse(event: str, data: Dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+async def _evolve_relations_later(
+    session: Dict[str, Any],
+    responder: Dict[str, Any],
+    anchor: Dict[str, Any],
+    user_text: str,
+    reply_text: str,
+    message_id: int,
+) -> None:
+    """流式回复结束后再跑关系演化，自己拿一个连接（失败不影响对话）。"""
+
+    try:
+        async with db.pool().acquire() as conn:
+            await evolve_relations(
+                conn,
+                session=session,
+                responder=responder,
+                anchor=anchor,
+                user_text=user_text,
+                reply_text=reply_text,
+                message_id=message_id,
+            )
+    except Exception:  # noqa: BLE001 - 演化是增值步骤
+        pass
+
+
 @app.post("/api/sessions/{session_id}/messages/stream")
-async def send_message_stream(session_id: int, payload: SendMessageRequest) -> StreamingResponse:
+async def send_message_stream(
+    session_id: int, payload: SendMessageRequest, background: BackgroundTasks
+) -> StreamingResponse:
     """流式回复。文本走 SSE，语音在第 3 期接入时挂在同一套事件上。"""
 
     if not (payload.content or "").strip():
@@ -454,6 +483,16 @@ async def send_message_stream(session_id: int, payload: SendMessageRequest) -> S
                     "seq": reply["seq"],
                     "content": reply["content"],
                 },
+            )
+            # 关系演化放在回复之后跑：真实模型要读一轮对话，不能让出字等它
+            background.add_task(
+                _evolve_relations_later,
+                prepared.session,
+                prepared.responder,
+                prepared.anchor,
+                payload.content,
+                text,
+                reply["id"],
             )
         except DomainError as exc:
             yield _sse("error", {"code": exc.code, "message": exc.message})

@@ -85,3 +85,6 @@ class ChatResponse(BaseModel):
     anchor: Dict[str, Any]
     responder: Dict[str, Any]
     provider: Dict[str, Any]
+    relation_changes: List[Dict[str, Any]] = Field(
+        default_factory=list, description="这一轮发生的关系变化（F14）"
+    )

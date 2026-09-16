@@ -16,6 +16,7 @@ from app.config import settings
 from app.errors import CharacterUnavailable, DomainError, NotFound
 from app.prompt import PromptContext, build_chat_messages, build_system_prompt
 from app.providers.base import LLMProvider
+from app.services.relation_evolve import evolve_relations
 
 MAX_CONTENT_LENGTH = 2000
 
@@ -130,7 +131,7 @@ async def prepare_turn(
         conn, session["persona_id"], session["work_id"], responder["id"], character_ids
     )
     declared_relations = await repo.list_declared_relations(
-        conn, session["persona_id"], character_ids
+        conn, session["persona_id"], character_ids, anchor_seq=anchor["seq"]
     )
 
     # 记忆按锚点分层：只把「此刻及之前」说过的话送进模型，之后的不进（往回拨时间线就忘掉未来）
@@ -241,6 +242,15 @@ async def chat_once(
     if not reply_text:
         reply_text = "……"
     reply = await persist_reply(conn, prepared, reply_text, provider)
+    changes = await evolve_relations(
+        conn,
+        session=prepared.session,
+        responder=prepared.responder,
+        anchor=prepared.anchor,
+        user_text=prepared.user_message["content"],
+        reply_text=reply_text,
+        message_id=reply["id"],
+    )
     return {
         "user_message": prepared.user_message,
         "reply": reply,
@@ -250,4 +260,5 @@ async def chat_once(
         },
         "responder": {"slug": prepared.responder["slug"], "name": prepared.responder["name"]},
         "provider": {"name": provider.name, "model": provider.model},
+        "relation_changes": changes,
     }
