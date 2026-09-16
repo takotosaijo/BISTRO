@@ -24,12 +24,15 @@ WORK = "shuihu-100"
 _PROMPT_CACHE: Dict[str, Dict[int, str]] = {}
 
 
-async def _reader_user(conn: asyncpg.Connection, work_id: int, anchor_id: int) -> int:
-    """关系要走视图读，而视图按「用户当前锚点」解析，所以每个锚点借一个只读用户。"""
+async def _reader_persona(conn: asyncpg.Connection, work_id: int, anchor_id: int) -> int:
+    """关系要走视图读，而视图按「身份 + 该账号当前锚点」解析，所以每个锚点借一个只读身份。"""
 
     user = await repo.ensure_user(conn, f"layer-check-{anchor_id}", "分层检查")
     await repo.set_current_anchor(conn, user["id"], work_id, anchor_id)
-    return user["id"]
+    personas = await repo.list_personas(conn, user["id"], work_id)
+    if personas:
+        return personas[0]["id"]
+    return (await repo.create_persona(conn, user["id"], work_id, name="分层检查"))["id"]
 
 
 async def prompts_by_anchor(conn: asyncpg.Connection, slug: str) -> Dict[int, str]:
@@ -51,9 +54,9 @@ async def prompts_by_anchor(conn: asyncpg.Connection, slug: str) -> Dict[int, st
         states = await repo.get_character_states(
             conn, anchor["id"], [c["id"] for c in characters]
         )
-        user_id = await _reader_user(conn, work["id"], anchor["id"])
+        persona_id = await _reader_persona(conn, work["id"], anchor["id"])
         relations = await repo.list_effective_relationships(
-            conn, user_id, work["id"], [me["id"]], [c["id"] for c in peers]
+            conn, persona_id, work["id"], [me["id"]], [c["id"] for c in peers]
         )
         ctx = PromptContext(
             character=me,
@@ -208,9 +211,9 @@ async def test_relationship_note_about_zhaoan_starts_at_anchor_10(conn) -> None:
 
     for chapter_no, should_mention in ((23, False), (71, True)):
         anchor = next(a for a in anchors if a["chapter_no"] == chapter_no)
-        user_id = await _reader_user(conn, work["id"], anchor["id"])
+        persona_id = await _reader_persona(conn, work["id"], anchor["id"])
         relations = await repo.list_effective_relationships(
-            conn, user_id, work["id"], [wu_song], [song_jiang]
+            conn, persona_id, work["id"], [wu_song], [song_jiang]
         )
         assert relations, f"第{chapter_no}回 武松→宋江 的关系边丢了"
         note = relations[0]["private_note"] or ""

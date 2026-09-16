@@ -24,6 +24,7 @@ from app.schemas import (
     SetTimelineRequest,
 )
 from app.services import chat as chat_service
+from app.services.relation_parse import sync_declared_relations
 
 LAB_PAGE = Path(__file__).resolve().parent / "static" / "lab.html"
 
@@ -153,7 +154,7 @@ async def create_persona(user_id: int, payload: PersonaRequest) -> Dict[str, Any
         work = await repo.get_work_by_slug(conn, payload.work_slug)
         if work is None:
             raise NotFound("作品不存在")
-        return await repo.create_persona(
+        persona = await repo.create_persona(
             conn,
             user_id,
             work["id"],
@@ -164,6 +165,8 @@ async def create_persona(user_id: int, payload: PersonaRequest) -> Dict[str, Any
             speech_style=payload.speech_style,
             free_note=payload.free_note,
         )
+        persona["relations"] = await sync_declared_relations(conn, persona)
+        return persona
 
 
 @app.get("/api/users/{user_id}/personas")
@@ -203,7 +206,10 @@ async def update_persona(persona_id: int, payload: PersonaUpdateRequest) -> Dict
         )
         if persona is None:
             raise NotFound("身份不存在")
+        persona["relations"] = await sync_declared_relations(conn, persona)
         return persona
+
+
 
 
 @app.get("/api/users/{user_id}/timeline")
@@ -356,10 +362,13 @@ async def prompt_preview(
         )
         peer_relations = await repo.list_effective_relationships(
             conn,
-            session["user_id"],
+            session["persona_id"],
             session["work_id"],
             from_ids=[target["id"]],
             to_ids=character_ids,
+        )
+        declared_relations = await repo.list_declared_relations(
+            conn, session["persona_id"], character_ids
         )
         from app.prompt import PromptContext, build_system_prompt
 
@@ -372,6 +381,7 @@ async def prompt_preview(
             user_relation=user_relation,
             peers=characters,
             peer_relations=peer_relations,
+            declared_relations=declared_relations,
         )
         return {
             "session_id": session_id,

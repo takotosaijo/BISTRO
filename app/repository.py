@@ -308,12 +308,12 @@ async def get_character_states(
 
 async def list_effective_relationships(
     conn: asyncpg.Connection,
-    user_id: int,
+    persona_id: int,
     work_id: int,
     from_ids: Sequence[int],
     to_ids: Sequence[int],
 ) -> List[Dict[str, Any]]:
-    """按用户当前时间锚点解析后的角色→角色关系（用户覆盖优先）。"""
+    """按这个身份的当前时间锚点解析后的角色→角色关系（身份覆盖优先）。"""
 
     return rows_to_dicts(
         await conn.fetch(
@@ -322,16 +322,108 @@ async def list_effective_relationships(
                    private_note, is_known_to_target, effective_source,
                    valid_from_anchor_id, valid_to_anchor_id
             FROM v_effective_relationships
-            WHERE user_id = $1 AND work_id = $2
+            WHERE persona_id = $1 AND work_id = $2
               AND from_id = ANY($3::bigint[])
               AND to_id = ANY($4::bigint[])
             """,
-            user_id,
+            persona_id,
             work_id,
             list(from_ids),
             list(to_ids),
         )
     )
+
+
+async def list_declared_relations(
+    conn: asyncpg.Connection, persona_id: int, character_ids: Sequence[int]
+) -> List[Dict[str, Any]]:
+    """这个身份与这些角色之间「用户声明」的关系边（用户↔角色，两个方向各一行）。
+
+    F12 的产物：人设语义解析出来后落成这里的边，prompt 按它渲染。
+    """
+
+    if not character_ids:
+        return []
+    return rows_to_dicts(
+        await conn.fetch(
+            """
+            SELECT from_kind, from_id, to_kind, to_id, label, closeness, trust,
+                   wariness, affection, private_note, is_known_to_target,
+                   override_scope, valid_from_anchor_id
+            FROM relationship_edges
+            WHERE source = 'user'
+              AND persona_id = $1
+              AND (
+                (from_kind = 'user' AND to_kind = 'character' AND to_id = ANY($2::bigint[]))
+                OR (from_kind = 'character' AND to_kind = 'user' AND from_id = ANY($2::bigint[]))
+              )
+            ORDER BY from_kind, from_id
+            """,
+            persona_id,
+            list(character_ids),
+        )
+    )
+
+
+async def replace_declared_relation(
+    conn: asyncpg.Connection,
+    persona_id: int,
+    work_id: int,
+    character_id: int,
+    *,
+    user_label: str,
+    user_stance: Optional[str],
+    character_label: str,
+    character_knows: bool,
+    closeness: int,
+    trust: int,
+    wariness: int,
+    affection: int,
+    override_scope: str = "always",
+) -> None:
+    """写入一对「用户↔角色」的声明边：用户怎么看他 + 他怎么看她。
+
+    这是**声明动作的产物**：一次声明产出两条有向边（父女本就是双向事实），
+    不是「改一边自动同步另一边」——那条硬约束针对的是运行期的隐式同步。
+    """
+
+    async with conn.transaction():
+        await conn.execute(
+            """
+            DELETE FROM relationship_edges
+            WHERE source = 'user' AND persona_id = $1
+              AND (
+                (from_kind = 'user' AND to_kind = 'character' AND to_id = $2)
+                OR (from_kind = 'character' AND to_kind = 'user' AND from_id = $2)
+              )
+            """,
+            persona_id,
+            character_id,
+        )
+        await conn.execute(
+            """
+            INSERT INTO relationship_edges
+              (work_id, persona_id, source, from_kind, from_id, to_kind, to_id, label,
+               closeness, trust, wariness, affection, private_note, is_known_to_target,
+               override_scope)
+            VALUES ($1, $2, 'user', 'user', $2, 'character', $3, $4,
+                    $5, $6, $7, $8, $9, $10, $11),
+                   ($1, $2, 'user', 'character', $3, 'user', $2, $12,
+                    $5, $6, $7, $8, NULL, true, $11)
+            """,
+            work_id,
+            persona_id,
+            character_id,
+            user_label,
+            closeness,
+            trust,
+            wariness,
+            affection,
+            user_stance,
+            character_knows,
+            override_scope,
+            character_label,
+        )
 
 
 async def get_user_character_relation(

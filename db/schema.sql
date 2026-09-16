@@ -256,7 +256,9 @@ CREATE TABLE user_timeline_settings (
 CREATE TABLE relationship_edges (
   id            bigserial PRIMARY KEY,
   work_id       bigint NOT NULL REFERENCES works(id) ON DELETE CASCADE,
-  user_id       bigint REFERENCES users(id) ON DELETE CASCADE,  -- source='user' 时必填
+  -- source='user' 时指向声明这条关系的**身份**（不是账号）：换身份就是换一套关系。
+  -- 用户↔角色的两个方向各占一行，两行的 persona_id 都填同一个身份，方向由 from/to 表达。
+  persona_id    bigint REFERENCES personas(id) ON DELETE CASCADE,
   source        edge_source NOT NULL,
   from_kind     actor_kind NOT NULL,
   from_id       bigint NOT NULL,
@@ -272,12 +274,13 @@ CREATE TABLE relationship_edges (
   valid_from_anchor_id bigint REFERENCES timeline_anchors(id) ON DELETE SET NULL,  -- NULL = 自始
   valid_to_anchor_id   bigint REFERENCES timeline_anchors(id) ON DELETE SET NULL,  -- NULL = 至今后
   override_scope override_scope,        -- 仅 source='user' 有值
+  is_manual     boolean NOT NULL DEFAULT false,  -- 用户手改过的声明：重新解析时不许覆盖
   created_at    timestamptz NOT NULL DEFAULT now(),
   updated_at    timestamptz NOT NULL DEFAULT now(),
-  CHECK (source = 'user' OR user_id IS NULL),
-  CHECK (source <> 'user' OR user_id IS NOT NULL),
+  CHECK (source = 'user' OR persona_id IS NULL),
+  CHECK (source <> 'user' OR persona_id IS NOT NULL),
   CHECK (source <> 'user' OR override_scope IS NOT NULL),
-  -- 角色不能对自己成边（用户与角色的 id 可能同值，故按 kind 判定）
+  -- 角色不能对自己成边（身份与角色的 id 可能同值，故按 kind 判定）
   CHECK (NOT (from_kind = 'character' AND to_kind = 'character' AND from_id = to_id))
 );
 
@@ -502,15 +505,20 @@ CREATE TABLE session_summaries (
 
 CREATE VIEW v_effective_relationships AS
 WITH base AS (
-  SELECT ts.user_id,
+  -- 关系按**身份**解析：时间线仍取账号的当前锚点，但用户覆盖只认这个身份自己声明的
+  SELECT p.id AS persona_id,
+         p.user_id,
          ts.work_id,
          a.id  AS anchor_id,
          a.seq AS anchor_seq
-  FROM user_timeline_settings ts
+  FROM personas p
+  JOIN user_timeline_settings ts
+    ON ts.user_id = p.user_id AND ts.work_id = p.work_id
   JOIN timeline_anchors a ON a.id = ts.current_anchor_id
 ),
 candidates AS (
-  SELECT b.user_id,
+  SELECT b.persona_id,
+         b.user_id,
          b.work_id,
          b.anchor_id,
          e.from_kind,
@@ -534,23 +542,23 @@ candidates AS (
   FROM base b
   JOIN relationship_edges e
     ON e.work_id = b.work_id
-   AND (e.user_id = b.user_id OR e.user_id IS NULL)
-   AND e.from_kind = 'character'      -- 角色↔角色；用户相关的边单独处理
+   AND (e.persona_id = b.persona_id OR e.persona_id IS NULL)
+   AND e.from_kind = 'character'      -- 角色↔角色；用户相关的边单独渲染
    AND e.to_kind   = 'character'
   LEFT JOIN timeline_anchors vf ON vf.id = e.valid_from_anchor_id
   LEFT JOIN timeline_anchors vt ON vt.id = e.valid_to_anchor_id
   WHERE COALESCE(vf.seq, -1) <= b.anchor_seq
     AND (vt.seq IS NULL OR vt.seq > b.anchor_seq)
 )
-SELECT DISTINCT ON (user_id, from_kind, from_id, to_kind, to_id)
-       user_id, work_id, anchor_id,
+SELECT DISTINCT ON (persona_id, from_kind, from_id, to_kind, to_id)
+       persona_id, user_id, work_id, anchor_id,
        from_kind, from_id, to_kind, to_id,
        label, closeness, trust, wariness, affection,
        private_note, is_known_to_target,
        source AS effective_source, override_scope,
        valid_from_anchor_id, valid_to_anchor_id
 FROM candidates
-ORDER BY user_id, from_kind, from_id, to_kind, to_id,
+ORDER BY persona_id, from_kind, from_id, to_kind, to_id,
          priority DESC,      -- 用户覆盖优先
          from_seq DESC;      -- 同一来源取最近生效的一条
 
@@ -561,6 +569,7 @@ COMMENT ON VIEW v_effective_relationships IS
 CREATE VIEW v_session_relationship_context AS
 SELECT s.id AS session_id,
        s.user_id,
+       s.persona_id,
        r.from_id AS from_character_id,
        r.to_id   AS to_character_id,
        r.label,
@@ -572,7 +581,8 @@ SELECT s.id AS session_id,
        r.is_known_to_target,
        r.effective_source
 FROM sessions s
-JOIN v_effective_relationships r ON r.user_id = s.user_id AND r.work_id = s.work_id
+JOIN v_effective_relationships r
+  ON r.persona_id = s.persona_id AND r.work_id = s.work_id
 JOIN session_members mf ON mf.session_id = s.id
                        AND mf.member_kind = 'character' AND mf.member_id = r.from_id
 JOIN session_members mt ON mt.session_id = s.id

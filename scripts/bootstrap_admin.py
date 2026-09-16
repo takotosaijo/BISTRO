@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app import db  # noqa: E402
 from app import repository as repo  # noqa: E402
 from app.config import settings  # noqa: E402
+from app.services.relation_parse import sync_declared_relations  # noqa: E402
 
 ACCOUNT = "admin"
 CHAPTER_NO = 10  # 第十回 林教头风雪山神庙
@@ -104,6 +105,8 @@ async def main() -> None:
             rows = []
             for spec in IDENTITIES:
                 persona = await upsert_persona(conn, user["id"], work["id"], spec)
+                # 保存身份 → 解析自述里的关系（F12），然后才看 prompt
+                await sync_declared_relations(conn, persona)
                 existing = await conn.fetchval(
                     """
                     SELECT s.id FROM sessions s

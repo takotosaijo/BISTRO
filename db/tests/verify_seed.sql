@@ -8,6 +8,12 @@ BEGIN;
 
 INSERT INTO users (external_id, display_name) VALUES ('smoke-test', '冒烟测试');
 
+-- 关系覆盖挂在**身份**上（2026-09-16 起），先给这个账号建一个身份
+INSERT INTO personas (user_id, work_id, name, identity)
+SELECT u.id, w.id, '冒烟身份', '冒烟测试用的身份'
+FROM users u, works w
+WHERE u.external_id = 'smoke-test' AND w.slug = 'shuihu-100';
+
 INSERT INTO user_timeline_settings (user_id, work_id, current_anchor_id)
 SELECT u.id, w.id, a.id
 FROM users u, works w, timeline_anchors a
@@ -16,6 +22,7 @@ WHERE u.external_id = 'smoke-test' AND w.slug = 'shuihu-100' AND a.seq = 1;
 DO $$
 DECLARE
   v_user    bigint;
+  v_persona bigint;
   v_work    bigint;
   v_anchor3 bigint;
   v_anchor5 bigint;
@@ -31,6 +38,7 @@ DECLARE
   v_from    bigint;
 BEGIN
   SELECT id INTO v_user   FROM users WHERE external_id = 'smoke-test';
+  SELECT id INTO v_persona FROM personas WHERE user_id = v_user ORDER BY id LIMIT 1;
   SELECT id INTO v_work   FROM works WHERE slug = 'shuihu-100';
   SELECT id INTO v_lchong FROM characters WHERE slug = 'lin-chong';
   SELECT id INTO v_gaoqiu FROM characters WHERE slug = 'gao-qiu';
@@ -43,7 +51,7 @@ BEGIN
   -- 1. 锚点 1：林冲→高俅 取原著边
   SELECT label, effective_source INTO v_label, v_src
   FROM v_effective_relationships
-  WHERE user_id = v_user AND from_id = v_lchong AND to_id = v_gaoqiu;
+  WHERE persona_id = v_persona AND from_id = v_lchong AND to_id = v_gaoqiu;
   IF v_label <> '殿帅府麾下的禁军教头' OR v_src <> 'canon' THEN
     RAISE EXCEPTION '锚点1 关系解析错误：label=%, source=%', v_label, v_src;
   END IF;
@@ -53,7 +61,7 @@ BEGIN
   UPDATE user_timeline_settings SET current_anchor_id = v_anchor3 WHERE user_id = v_user;
   SELECT label, effective_source INTO v_label, v_src
   FROM v_effective_relationships
-  WHERE user_id = v_user AND from_id = v_lchong AND to_id = v_gaoqiu;
+  WHERE persona_id = v_persona AND from_id = v_lchong AND to_id = v_gaoqiu;
   IF v_label <> '不共戴天的死仇' THEN
     RAISE EXCEPTION '锚点3 关系未随时间线变化：label=%', v_label;
   END IF;
@@ -62,7 +70,7 @@ BEGIN
   -- 3. 有向边独立：反向的高俅→林冲不受影响
   SELECT label, effective_source INTO v_label, v_src
   FROM v_effective_relationships
-  WHERE user_id = v_user AND from_id = v_gaoqiu AND to_id = v_lchong;
+  WHERE persona_id = v_persona AND from_id = v_gaoqiu AND to_id = v_lchong;
   IF v_label <> '眼中钉，必欲除之' OR v_src <> 'canon' THEN
     RAISE EXCEPTION '反向边被错误覆盖：label=%, source=%', v_label, v_src;
   END IF;
@@ -70,17 +78,17 @@ BEGIN
 
   -- 4. 用户覆盖优先于原著
   INSERT INTO relationship_edges (
-    work_id, user_id, source, from_kind, from_id, to_kind, to_id,
+    work_id, persona_id, source, from_kind, from_id, to_kind, to_id,
     label, closeness, trust, wariness, affection,
     valid_from_anchor_id, override_scope
   ) VALUES (
-    v_work, v_user, 'user', 'character', v_lchong, 'character', v_gaoqiu,
+    v_work, v_persona, 'user', 'character', v_lchong, 'character', v_gaoqiu,
     '暗中结盟', 50, 40, 20, 10, v_anchor3, 'from_here'
   );
 
   SELECT label, effective_source INTO v_label, v_src
   FROM v_effective_relationships
-  WHERE user_id = v_user AND from_id = v_lchong AND to_id = v_gaoqiu;
+  WHERE persona_id = v_persona AND from_id = v_lchong AND to_id = v_gaoqiu;
   IF v_label <> '暗中结盟' OR v_src <> 'user' THEN
     RAISE EXCEPTION '用户覆盖未生效：label=%, source=%', v_label, v_src;
   END IF;

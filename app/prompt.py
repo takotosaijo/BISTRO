@@ -44,6 +44,7 @@ class PromptContext:
     persona: Optional[Dict[str, Any]] = None
     user_display_name: Optional[str] = None
     user_relation: Optional[Dict[str, Any]] = None
+    declared_relations: List[Dict[str, Any]] = field(default_factory=list)
     peers: List[Dict[str, Any]] = field(default_factory=list)
     peer_relations: List[Dict[str, Any]] = field(default_factory=list)
     last_talk_anchor: Optional[Dict[str, Any]] = None
@@ -112,6 +113,23 @@ def _address_forms(state: Optional[Dict[str, Any]]) -> str:
     return "；".join(f"称{who}为「{how}」" for who, how in forms.items())
 
 
+def declared_by_character(relations: List[Dict[str, Any]]) -> Dict[int, Dict[str, Any]]:
+    """把「用户声明」的关系边按角色归拢成两个方向。
+
+    F12：人设语义解析出来的一对边——用户怎么看他（user_to_character）、
+    他怎么看她（character_to_user）。有声明时不再渲染互动累积出来的「素不相识」，
+    否则同一个 prompt 里会自相矛盾（用户写「我是他女儿」，系统却说素不相识）。
+    """
+
+    grouped: Dict[int, Dict[str, Any]] = {}
+    for relation in relations:
+        if relation["from_kind"] == "user":
+            grouped.setdefault(relation["to_id"], {})["user_to_character"] = relation
+        else:
+            grouped.setdefault(relation["from_id"], {})["character_to_user"] = relation
+    return grouped
+
+
 def build_system_prompt(ctx: PromptContext) -> str:
     c = ctx.character
     anchor = ctx.anchor
@@ -169,7 +187,19 @@ def build_system_prompt(ctx: PromptContext) -> str:
     persona = ctx.persona or {}
     user_desc = persona.get("identity") or "来历不明的外乡人"
     relation = ctx.user_relation
-    if relation:
+    declared = declared_by_character(ctx.declared_relations).get(c["id"])
+    if declared:
+        # 用户自己声明的设定优先于互动累积：写「我是他女儿」就不该显示「素不相识」
+        user_to_character = declared.get("user_to_character")
+        character_to_user = declared.get("character_to_user")
+        lines.append(f"- 对 {ctx.user_name}（{user_desc}）：")
+        if user_to_character:
+            lines.append(f"  {ctx.user_name}认定：{user_to_character['label']}")
+            if user_to_character.get("private_note"):
+                lines.append(f"  他自己说过：{user_to_character['private_note']}")
+        if character_to_user:
+            lines.append(f"  你心里：{character_to_user['label']}")
+    elif relation:
         stage = STAGE_LABELS.get(relation.get("stage"), "素不相识")
         attitude = describe_attitude(
             relation.get("char_affinity") or 0,

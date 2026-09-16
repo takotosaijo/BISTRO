@@ -40,7 +40,7 @@ def _require(condition: bool, message: str) -> None:
 
 async def _load_peers_relations(
     conn: asyncpg.Connection,
-    user_id: int,
+    persona_id: int,
     work_id: int,
     responder_id: int,
     member_ids: List[int],
@@ -48,7 +48,7 @@ async def _load_peers_relations(
     if len(member_ids) < 2:
         return []
     return await repo.list_effective_relationships(
-        conn, user_id, work_id, from_ids=[responder_id], to_ids=member_ids
+        conn, persona_id, work_id, from_ids=[responder_id], to_ids=member_ids
     )
 
 
@@ -127,7 +127,10 @@ async def prepare_turn(
         conn, session["user_id"], responder["id"]
     )
     peer_relations = await _load_peers_relations(
-        conn, session["user_id"], session["work_id"], responder["id"], character_ids
+        conn, session["persona_id"], session["work_id"], responder["id"], character_ids
+    )
+    declared_relations = await repo.list_declared_relations(
+        conn, session["persona_id"], character_ids
     )
 
     # 记忆按锚点分层：只把「此刻及之前」说过的话送进模型，之后的不进（往回拨时间线就忘掉未来）
@@ -148,6 +151,7 @@ async def prepare_turn(
         user_relation=user_relation,
         peers=characters,
         peer_relations=peer_relations,
+        declared_relations=declared_relations,
         last_talk_anchor=last_talk_anchor,
     )
 
