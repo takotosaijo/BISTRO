@@ -136,3 +136,38 @@ async def test_updating_persona_reparses_relations(client: AsyncClient) -> None:
 
     prompt = await _prompt_for(client, persona["id"])
     assert "素不相识，初次照面" not in prompt
+
+
+async def test_manual_relation_survives_reparse(client, conn) -> None:
+    """用户手改过的声明（is_manual）不许被重新解析覆盖——这是 DECISIONS 里的约定。"""
+
+    from app import repository as repo
+
+    _, persona = await _persona_with(client, "林冲失散多年的私生女")
+    character = (
+        await client.get(f"/api/works/{WORK}/characters")
+    ).json()
+    lin_chong = next(c for c in character if c["slug"] == "lin-chong")
+
+    await conn.execute(
+        """
+        UPDATE relationship_edges SET is_manual = true, label = '我自己改过的说法'
+        WHERE source = 'user' AND persona_id = $1 AND from_kind = 'user' AND to_id = $2
+        """,
+        persona["id"],
+        lin_chong["id"],
+    )
+    # 再保存一次身份（会触发重新解析），手改的那条必须原样保留
+    await client.put(
+        f"/api/personas/{persona['id']}",
+        json={"name": "玉娆", "identity": "林冲失散多年的私生女，随母姓"},
+    )
+    labels = await conn.fetch(
+        """
+        SELECT label FROM relationship_edges
+        WHERE source = 'user' AND persona_id = $1 AND from_kind = 'user' AND to_id = $2
+        """,
+        persona["id"],
+        lin_chong["id"],
+    )
+    assert [row["label"] for row in labels] == ["我自己改过的说法"]

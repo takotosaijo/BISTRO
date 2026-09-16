@@ -365,6 +365,26 @@ async def list_declared_relations(
     )
 
 
+async def list_persona_declarations(
+    conn: asyncpg.Connection, persona_id: int
+) -> List[Dict[str, Any]]:
+    """这个身份声明过的关系（用户→角色方向），带角色名，用于界面展示。"""
+
+    return rows_to_dicts(
+        await conn.fetch(
+            """
+            SELECT c.slug AS character, c.name AS character_name, e.label AS user_label
+            FROM relationship_edges e
+            JOIN characters c ON c.id = e.to_id
+            WHERE e.source = 'user' AND e.persona_id = $1
+              AND e.from_kind = 'user' AND e.to_kind = 'character'
+            ORDER BY c.name
+            """,
+            persona_id,
+        )
+    )
+
+
 async def replace_declared_relation(
     conn: asyncpg.Connection,
     persona_id: int,
@@ -388,6 +408,21 @@ async def replace_declared_relation(
     """
 
     async with conn.transaction():
+        manual = await conn.fetchval(
+            """
+            SELECT count(*) FROM relationship_edges
+            WHERE source = 'user' AND is_manual AND persona_id = $1
+              AND (
+                (from_kind = 'user' AND to_kind = 'character' AND to_id = $2)
+                OR (from_kind = 'character' AND to_kind = 'user' AND from_id = $2)
+              )
+            """,
+            persona_id,
+            character_id,
+        )
+        if manual:
+            # 用户手改过的声明优先：重新解析不许覆盖它（见 DECISIONS 2026-09-16）
+            return
         await conn.execute(
             """
             DELETE FROM relationship_edges

@@ -86,6 +86,7 @@
         <button id="newPersona">新建角色</button>
         <button id="savePersona">保存</button>
       </div>
+      <div class="hint" id="personaHint">—</div>
     </div>
 
     <div class="block">
@@ -212,10 +213,14 @@ async function selectPersona(personaId) {
   fail("");
   state.personaId = personaId;
   localStorage.setItem("lab.persona", String(personaId));
-  const persona = state.personas.find((p) => p.id === personaId)
-    || await api("/api/personas/" + personaId);
+  // 取详情而不是列表里的对象：详情带着已声明的关系（列表为了轻量不带）
+  const persona = await api("/api/personas/" + personaId);
   fillPersonaForm(persona);
   $("personaList").value = String(personaId);
+  const declared = (persona.relations || []).map((r) => r.character_name + "（" + r.user_label + "）");
+  $("personaHint").textContent = declared.length
+    ? "已声明：" + declared.join("；")
+    : "还没有声明关系（自述里点名提到角色才会建立）";
 
   const timeline = await api("/api/users/" + state.userId + "/timeline?work_slug=" + WORK);
   const current = timeline.current;
@@ -418,7 +423,11 @@ async function savePersona() {
   await loadPersonas();
   $("personaList").value = String(saved.id);
   fillPersonaForm(saved);
-  addMessage("sys", "角色已保存。换一个身份进来看，prompt 里的「你与在场之人」会跟着变。");
+  const relations = saved.relations || [];
+  const summary = relations.length
+    ? "解析出关系：" + relations.map((r) => r.character_name + "（" + r.user_label + "）").join("；")
+    : "没解析出与角色的关系——自述里要点名提到角色（例如「林冲」）才会建立关系。";
+  addMessage("sys", "角色已保存。" + summary);
   await refreshPrompt().catch(() => {});
 }
 

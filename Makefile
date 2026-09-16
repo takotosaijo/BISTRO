@@ -33,6 +33,9 @@ demo: ## 造演示数据：张三 × 林冲 × 第十回
 admin: ## 造开发用身份：路人 / 女儿 / 旧相识，试验台可切换
 	$(PY) scripts/bootstrap_admin.py
 
+reparse: ## 重新解析已有身份的人设关系（默认只处理 admin/demo，ARGS=--all 处理全部）
+	$(PY) scripts/reparse_personas.py $(ARGS)
+
 run: ## 起服务 http://127.0.0.1:8002（改端口：make run PORT=xxxx）
 	$(UVICORN) app.main:app --reload --port $(PORT)
 

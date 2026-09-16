@@ -188,6 +188,7 @@ async def get_persona(persona_id: int) -> Dict[str, Any]:
         persona = await repo.get_persona(conn, persona_id)
         if persona is None:
             raise NotFound("身份不存在")
+        persona["relations"] = await repo.list_persona_declarations(conn, persona_id)
         return persona
 
 
