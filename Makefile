@@ -12,7 +12,7 @@ DB_URL   ?= postgresql://postgres:123456@127.0.0.1:5433/bistro
 BISTRO_DATABASE_URL ?= $(DB_URL)
 export BISTRO_DATABASE_URL
 
-.PHONY: help setup db db-reset demo admin run test check secrets eval status
+.PHONY: help setup db db-reset demo admin run test check secrets eval eval-relation status
 
 help: ## 列出所有可用命令
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  \033[36m%-9s\033[0m %s\n", $$1, $$2}'
@@ -50,6 +50,9 @@ secrets: ## 检查 API Key 是否泄漏到被追踪的文件或提交历史
 
 eval: ## 角色一致性评测（真实模型，消耗额度；改 prompt 后必跑）
 	$(PY) scripts/eval_characters.py
+
+eval-relation: ## F14 真实模型正向验针：喂够凭证 → 他认下 → 写入新的关系边版本（消耗额度）
+	$(PY) scripts/check_relation_evolution.py
 
 status: ## 打印 PROGRESS.md 的快照段
 	@sed -n '/^## 快照/,/^---$$/p' PROGRESS.md

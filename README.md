@@ -117,6 +117,19 @@ make eval                                                    # 全部探针（�
 时间线（确定性判定），再查回复有没有出戏、提前知道未来、口吻串到别人身上。
 它**不判**「像不像本人」——那是人看的。
 
+### 关系演化正向验针（F14）
+
+```bash
+make eval-relation                                           # 真实模型，消耗额度
+.venv/bin/python scripts/check_relation_evolution.py --allow-mock   # 离线只验脚本管路
+```
+
+[scripts/check_relation_evolution.py](scripts/check_relation_evolution.py) 跑一个完整的认亲场景
+（玉娆拿出母亲的旧玉与只有家里人知道的旧疤），然后机械地检查：真实模型判定发生了
+「认下」这件事 → `relationship_edges` 写出从第十回生效的新版本、旧版本闭口 →
+`relationship_changes` 留下审计 → prompt 里新说法生效 → 滑回第二回旧说法自动重新生效。
+需要网络与额度，所以不进 `make check`；真实模型有随机性，没认下时它会明确告诉你凭证还不够。
+
 ### 密钥纪律
 
 - 密钥只写在 `.env`，`.env.example` 里永远留空，README / 日志 / 提交信息里不出现密钥。
