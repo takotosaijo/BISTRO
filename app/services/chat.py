@@ -130,7 +130,13 @@ async def prepare_turn(
         conn, session["user_id"], session["work_id"], responder["id"], character_ids
     )
 
-    history = await repo.list_messages(conn, session_id, limit=settings.max_history_messages)
+    # 记忆按锚点分层：只把「此刻及之前」说过的话送进模型，之后的不进（往回拨时间线就忘掉未来）
+    history = await repo.list_messages(
+        conn,
+        session_id,
+        limit=settings.max_history_messages,
+        up_to_anchor_seq=anchor["seq"],
+    )
     last_talk_anchor = await _resolve_last_talk_anchor(conn, history, anchor["id"])
 
     ctx = PromptContext(
@@ -158,7 +164,12 @@ async def prepare_turn(
         )
         await repo.touch_session(conn, session_id)
 
-    history = await repo.list_messages(conn, session_id, limit=settings.max_history_messages)
+    history = await repo.list_messages(
+        conn,
+        session_id,
+        limit=settings.max_history_messages,
+        up_to_anchor_seq=anchor["seq"],
+    )
     messages = build_chat_messages(
         ctx, history, responder_id=responder["id"], name_by_id={c["id"]: c["name"] for c in characters}
     )

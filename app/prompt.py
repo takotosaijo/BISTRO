@@ -218,10 +218,12 @@ def build_system_prompt(ctx: PromptContext) -> str:
     if c.get("knowledge_scope"):
         lines.append(str(c["knowledge_scope"]))
     if ctx.last_talk_anchor and ctx.last_talk_anchor.get("seq", 0) < anchor.get("seq", 0):
+        # 记忆按锚点分层：更早的对话仍在上下文里，所以这里只说「隔了些时日」，
+        # 不能再说「中间的事你未必知晓」——那是旧行为（历史不过滤）留下的自相矛盾。
         lines.append(
-            f"【时间已推移】你上一回与此人说话还在{ctx.last_talk_anchor.get('chapter_label', '')}"
-            f"《{ctx.last_talk_anchor.get('name', '')}》，如今已是"
-            f"{anchor.get('chapter_label', '')}。中间的事你未必知晓，除非他自己提起。"
+            f"【时间已推移】你们上一回交谈还在{ctx.last_talk_anchor.get('chapter_label', '')}"
+            f"《{ctx.last_talk_anchor.get('name', '')}》，如今已是{anchor.get('chapter_label', '')}，"
+            "中间隔了些时日；那些日子你在别处，他若问起，你说得清的就说，说不清的就说不清。"
         )
     lines.append("")
 

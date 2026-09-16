@@ -446,20 +446,37 @@ async def list_session_members(
 
 
 async def list_messages(
-    conn: asyncpg.Connection, session_id: int, limit: int = 50
+    conn: asyncpg.Connection,
+    session_id: int,
+    limit: int = 50,
+    up_to_anchor_seq: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
+    """会话消息，最近的 limit 条。
+
+    `up_to_anchor_seq` 用来实现「记忆按锚点分层」：只取该锚点及之前说过的话，
+    之后的不进上下文（往回拨时间线，角色就该忘掉未来）。
+    `anchor_id` 为 NULL 的消息（系统消息）视为不随时间变化，始终可见。
+    注意：这是**送进模型**的口径；接口原样返回整条会话日志，因为用户自己记得。
+    """
+
     return rows_to_dicts(
         await conn.fetch(
             """
             SELECT id, seq, sender_kind, sender_id, message_kind, content,
                    audio_url, emotion, anchor_id, created_at
             FROM (
-              SELECT * FROM messages WHERE session_id = $1 ORDER BY seq DESC LIMIT $2
+              SELECT m.* FROM messages m
+              LEFT JOIN timeline_anchors a ON a.id = m.anchor_id
+              WHERE m.session_id = $1
+                AND ($3::int IS NULL OR a.seq IS NULL OR a.seq <= $3)
+              ORDER BY m.seq DESC
+              LIMIT $2
             ) t
             ORDER BY seq
             """,
             session_id,
             limit,
+            up_to_anchor_seq,
         )
     )
 
