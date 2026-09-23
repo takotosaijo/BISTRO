@@ -38,7 +38,14 @@ async def test_lab_page_has_identity_switcher(client: AsyncClient) -> None:
     """F24 + 一人多身份：试验台要能建/切自己的角色，否则人设变体只能靠手输。"""
 
     body = (await client.get("/")).text
-    for marker in ("我的角色", "personaList", "newPersona", "/personas", "/api/personas/"):
+    for marker in (
+        "我的角色",
+        "personaList",
+        "newPersona",
+        "/personas",
+        "/api/personas/",
+        "personaFreeNote",   # F27：free_note 以前只有接口能写，试验台得能填
+    ):
         assert marker in body, f"身份切换器少了「{marker}」"
 
 

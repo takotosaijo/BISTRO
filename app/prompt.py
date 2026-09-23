@@ -150,6 +150,22 @@ def build_system_prompt(ctx: PromptContext) -> str:
     lines.append("# 你与在场之人")
     persona = ctx.persona or {}
     user_desc = persona.get("identity") or "来历不明的外乡人"
+    # 用户自己写的人设：identity 之外的四个字段以前存了没人用（F27）。
+    # 只当**背景事实**注入，不用它下判断——「你们是什么关系」仍以声明与视图为准。
+    # 末一句留给角色自己掂量：这些是对方自己说的，不是全知的事实。
+    profile = (
+        ("他的模样", persona.get("appearance")),
+        ("他说话的样子", persona.get("speech_style")),
+        ("他自己讲过的来历", persona.get("background")),
+        ("他特意交代过你的一件事", persona.get("free_note")),
+    )
+    written = [
+        f"{label}：{str(value).strip()}" for label, value in profile if (value or "").strip()
+    ]
+    if written:
+        lines.append(f"你面前的这个人叫{ctx.user_name}。")
+        lines.extend(written)
+        lines.append("（这些是他自己说的，信几分由你自己掂量。）")
     relation = ctx.user_relation
     declared = declared_by_character(ctx.declared_relations).get(c["id"])
     if declared:

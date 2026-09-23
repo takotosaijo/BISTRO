@@ -103,6 +103,7 @@
       <input id="personaBackground" type="text" placeholder="背景（可留空）" style="margin-top:6px">
       <input id="personaAppearance" type="text" placeholder="外貌（可留空）" style="margin-top:6px">
       <input id="personaSpeech" type="text" placeholder="说话方式（可留空）" style="margin-top:6px">
+      <input id="personaFreeNote" type="text" placeholder="想让他记住的一件事（可留空）" style="margin-top:6px">
     </div>
 
     <div class="block">
@@ -210,6 +211,7 @@ function fillPersonaForm(persona) {
   $("personaBackground").value = (persona && persona.background) || "";
   $("personaAppearance").value = (persona && persona.appearance) || "";
   $("personaSpeech").value = (persona && persona.speech_style) || "";
+  $("personaFreeNote").value = (persona && persona.free_note) || "";
 }
 
 function resetCharacter() {
@@ -474,6 +476,7 @@ async function savePersona() {
     background: $("personaBackground").value.trim() || null,
     appearance: $("personaAppearance").value.trim() || null,
     speech_style: $("personaSpeech").value.trim() || null,
+    free_note: $("personaFreeNote").value.trim() || null,
   };
   const saved = state.personaId
     ? await api("/api/personas/" + state.personaId, { method: "PUT", body: JSON.stringify(body) })
