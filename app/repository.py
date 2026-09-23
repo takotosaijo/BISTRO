@@ -920,3 +920,35 @@ async def merge_message_meta(
     await conn.execute(
         "UPDATE messages SET meta = meta || $2::jsonb WHERE id = $1", message_id, patch
     )
+
+
+async def get_last_action_option_labels(
+    conn: asyncpg.Connection, session_id: int, before_message_id: int
+) -> List[str]:
+    """这条回复之前、最近一组已经给出去的选项（只用 label）。
+
+    判定器拿它回答「这是不是同一件事在反复要」：上一轮刚给过、这轮角色又没有新的具体索取，
+    就该给空数组——不然用户点完一个动作，下一轮又弹一组（2026-09-23 修的现场）。
+    """
+
+    row = await conn.fetchrow(
+        """
+        SELECT meta->'action_options' AS options
+        FROM messages
+        WHERE session_id = $1
+          AND seq < (SELECT seq FROM messages WHERE id = $2)
+          AND meta ? 'action_options'
+          AND jsonb_array_length(meta->'action_options') > 0
+        ORDER BY seq DESC
+        LIMIT 1
+        """,
+        session_id,
+        before_message_id,
+    )
+    if row is None or not row["options"]:
+        return []
+    return [
+        str(item.get("label") or "")
+        for item in row["options"]
+        if isinstance(item, dict) and item.get("label")
+    ]

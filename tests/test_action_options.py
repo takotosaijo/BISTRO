@@ -8,6 +8,9 @@
      也不给一个「只有一条路」的假选择
   4. 点选项 / 自己写动作 → 作为 message_kind='narration' 进历史，并且**真的进模型上下文**
      （带「（动作）」前缀，不然模型会把动作当台词读）
+  5. 2026-09-23 补的两条硬闸：
+     · 角色这轮什么都没说（「……」）→ 不给——现场就是空回复那轮写出了角色口吻的选项
+     · 选项写成角色口吻（voice != user）→ 整组丢——用户点了会替角色说话
 """
 
 from __future__ import annotations
@@ -17,8 +20,15 @@ from typing import Any, Dict, Tuple
 
 from httpx import AsyncClient
 
+from app import repository as repo
 from app.services import chat as chat_service
-from app.services.relation_evolve import MockChangeDetector, parse_turn_analysis
+from app.services.relation_evolve import (
+    ActionOption,
+    MockChangeDetector,
+    TurnAnalysis,
+    evolve_relations,
+    parse_turn_analysis,
+)
 
 WORK = "shuihu-100"
 
@@ -87,6 +97,106 @@ async def test_action_options_only_when_character_asks() -> None:
         reply_text="林某往哪里去，与足下何干？",
     )
     assert quiet.options == [], "寻常说话不许弹选项——每轮都给会把对话变成点选游戏"
+
+
+async def test_action_options_not_offered_for_a_plain_question() -> None:
+    """问话不算要求：他问「你是谁」「几时没的」这种，打字就能答，不该弹选项。
+
+    这是 2026-09-23 那次的根因——原来的触发条件把「要你说清楚某件事」也算进来，
+    而角色几乎每轮都在问点什么，于是选项每轮都弹（27 个弹过的会话里 24 个是每轮都弹）。
+    """
+
+    detector = MockChangeDetector()
+    asked = await detector.detect(
+        character_name="宋江",
+        persona_summary="苏娘，林冲在东京时的旧相识",
+        current_labels="（还没有声明过关系）",
+        user_text="我就是当年在东京和他相识的人",
+        reply_text="娘子且慢，小可连娘子的来历都还不晓得。你且说说，你是何人，与林教头是何干系？",
+    )
+    assert asked.options == [], "问话不是要求——打字就能答，不该给行动选项"
+
+
+class _StubDetector:
+    """直接给出一组选项，用来单独验「写进 meta 之前的那两道硬闸」。"""
+
+    def __init__(self, options) -> None:
+        self.options = options
+
+    async def detect(self, **kwargs) -> TurnAnalysis:
+        return TurnAnalysis(changes=[], options=self.options)
+
+
+async def _run_stub(client, conn, session_id: int, *, reply_text: str, options) -> dict:
+    """借一条已经落库的回复，跑一次带桩判定器的 evolve_relations。"""
+
+    body = (
+        await client.post(
+            f"/api/sessions/{session_id}/messages", json={"content": "教头，听我说一句。"}
+        )
+    ).json()
+    reply_id = body["reply"]["id"]
+
+    session = await repo.get_session(conn, session_id)
+    anchor = await repo.get_current_anchor(conn, session["user_id"], session["work_id"])
+    members = await repo.list_session_members(conn, session_id)
+    characters = await repo.get_characters_by_ids(
+        conn, [m["member_id"] for m in members if m["member_kind"] == "character"]
+    )
+    outcome = await evolve_relations(
+        conn,
+        session=session,
+        responder=characters[0],
+        anchor=anchor,
+        user_text="教头，听我说一句。",
+        reply_text=reply_text,
+        message_id=reply_id,
+        detector=_StubDetector(options),
+    )
+    stored = await conn.fetchrow(
+        "SELECT meta FROM messages WHERE id = $1", reply_id
+    )
+    outcome["stored_meta"] = stored["meta"]
+    return outcome
+
+
+def _user_voiced() -> list:
+    return [
+        ActionOption(label="把玉佩递给他", action="我把那半块玉佩双手递到他面前。"),
+        ActionOption(label="说玉佩丢了", action="我说那半块玉早在逃难路上丢了。"),
+        ActionOption(label="反问一句", action="我反问他凭什么要这块玉。"),
+    ]
+
+
+async def test_action_options_dropped_when_the_character_says_nothing(client, conn) -> None:
+    """角色这一轮一个字都没说（空回复占位）→ 没有话可接，宁可什么都不给。"""
+
+    _, session = await _setup(client)
+    outcome = await _run_stub(
+        client, conn, session["id"], reply_text="……", options=_user_voiced()
+    )
+    assert outcome["action_options"] == []
+    assert outcome["stored_meta"]["action_options_dropped"] == "empty_reply"
+
+
+async def test_action_options_dropped_when_written_in_the_characters_voice(client, conn) -> None:
+    """选项写成角色口吻 → 整组丢。用户点了它就成了替角色说话，角色下一轮必然一头雾水。"""
+
+    _, session = await _setup(client)
+    options = [
+        ActionOption(
+            label="如实相告",
+            action="我压低声音对她说：林教头人还在，娘子不必过于忧心。",
+            voice="character",
+        ),
+        ActionOption(label="推说不知", action="我摇头说我不晓得。", voice="character"),
+        ActionOption(label="先问来历", action="我反问她可有凭据。", voice="character"),
+    ]
+    outcome = await _run_stub(
+        client, conn, session["id"], reply_text="姑娘，你且起来说话。", options=options
+    )
+    assert outcome["action_options"] == []
+    assert outcome["stored_meta"]["action_options_dropped"] == "character_voice"
 
 
 def test_action_options_count_is_pinned_by_the_product() -> None:

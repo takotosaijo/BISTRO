@@ -49,6 +49,7 @@ make status    # 打印 PROGRESS.md 的快照段
 .venv/bin/python scripts/check_llm.py --http http://127.0.0.1:8002   # 打真实服务，首字延迟才准
 make eval-relation                               # F14 正向验针：真实模型认亲 → 关系写新边版本
 make eval-summary                                # F22 验针：这一章的话被压成提要并进 prompt
+make eval-options                                # F26 验针（跨轮）：选项只在角色要东西时弹
 ```
 
 改了 prompt（`app/prompt.py`）或角色卡（`db/seed.sql`）之后，除 `make check` 外还要跑一次
