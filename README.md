@@ -78,6 +78,27 @@ make run      # 然后打开 http://127.0.0.1:8002/
 - 试验台的「我的角色」下面会显示当前身份**已声明**了哪些关系；没有的话，多半是自述里
   没点名提到角色（「东京城里开酒铺的掌柜」解析不出关系，「林冲失散多年的私生女」可以）。
 
+### prompt 的留痕与覆盖（F23）
+
+```bash
+pytest -k prompt_snapshot      # 快照留痕 + 锚点输入 + 卡片版本（4 项）
+pytest -k prompt_override      # 四维度覆盖 + 来源标注（3 项）
+```
+
+- **每轮留一份真实快照**：那一刻送进去的 system prompt 与完整对话，连同 provider / model /
+  模板版本，都写在 `prompt_snapshots` 里；`GET /api/sessions/{id}/prompt-snapshot?message_id=` 取回来。
+  查「这句回复当时到底看到了什么」要看它，不要看现在的 prompt。
+- **按锚点存装配原料**：`prompt_inputs` 每个 (会话, 锚点) 一条——该锚点的关系快照、用到的摘要 id、
+  每个角色的卡片版本、模板版本。存原料不存正文：卡片或模板一改，历史正文就成了废纸。
+  `GET /api/sessions/{id}/prompt-input` 看它。
+- **角色卡版本**：`characters.card_version` 配 `character_card_versions`（卡片一改追加一版，
+  只比对会进 prompt 的字段——`canon_arc` 不算）。
+- **四维度覆盖**：`prompt_overrides` 的四个维度列（用户 / 角色 / 锚点 / 会话）留空表示不限；
+  同一个 key 命中多条时**越具体越优先**（会话 > 锚点 > 角色 > 用户），渲染成 prompt 末尾的
+  「本轮特别交代」并标出来自哪一层。写用 `POST /api/prompt-overrides`，
+  看这次实际生效哪些用 `GET /api/sessions/{id}/prompt-overrides`。
+- 模板版本是 `app/prompt.py` 的 `PROMPT_VERSION` 常量 + git，不另建模板表（理由见 DECISIONS）。
+
 角色**明确提出要求**时（要凭证、要银子、要你发誓、要你跟他走），对话区下面会多出一条
 **情境选项**栏：3~4 个行动选项 + 一个「自己写一个动作」的输入框（F26）。
 点选项与自己写的动作都走 `message_kind='narration'`，以旁白进历史——角色以后记得「他是甩过来的」。

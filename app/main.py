@@ -21,6 +21,7 @@ from app.schemas import (
     CreateUserRequest,
     PersonaRequest,
     PersonaUpdateRequest,
+    PromptOverrideRequest,
     SendMessageRequest,
     SetTimelineRequest,
 )
@@ -374,6 +375,14 @@ async def prompt_preview(
         declared_relations = await repo.list_declared_relations(
             conn, session["persona_id"], character_ids, anchor_seq=anchor["seq"]
         )
+        overrides = await repo.list_effective_prompt_overrides(
+            conn,
+            work_id=session["work_id"],
+            persona_id=session["persona_id"],
+            character_id=target["id"],
+            anchor_id=anchor["id"],
+            session_id=session_id,
+        )
         # 让预览与真正送进模型的 prompt 一致：更早章节的提要（F22）也要按同一个窗口规则取
         history = await repo.list_messages(
             conn,
@@ -400,6 +409,7 @@ async def prompt_preview(
             peer_relations=peer_relations,
             declared_relations=declared_relations,
             summaries=summaries,
+            overrides=overrides,
         )
         return {
             "session_id": session_id,
@@ -407,6 +417,136 @@ async def prompt_preview(
             "anchor": {"seq": anchor["seq"], "chapter_label": anchor["chapter_label"]},
             "system_prompt": build_system_prompt(ctx),
         }
+
+
+@app.get("/api/sessions/{session_id}/prompt-snapshot")
+async def prompt_snapshot(
+    session_id: int, message_id: Optional[int] = Query(None)
+) -> Dict[str, Any]:
+    """F23：某一条回复当时送进模型的到底是什么。不给 message_id 就取最近一条。
+
+    「这一章的 prompt 现在长什么样」不靠它回答——那是 prompt-inputs + 版本的事；
+    这张表是**留痕**：某年某月某一句回复，当时看到的原文。
+    """
+
+    async with db.pool().acquire() as conn:
+        if await repo.get_session(conn, session_id) is None:
+            raise NotFound("会话不存在")
+        snapshot = await repo.get_prompt_snapshot(conn, session_id, message_id)
+        if snapshot is None:
+            raise NotFound("这条会话还没有 prompt 快照——发出第一条消息之后才会有")
+        return snapshot
+
+
+@app.get("/api/sessions/{session_id}/prompt-input")
+async def prompt_input(
+    session_id: int, anchor_seq: Optional[int] = Query(None)
+) -> Dict[str, Any]:
+    """F23：这一章装配 prompt 用到的原料（关系快照 / 摘要 / 卡片与模板版本）。"""
+
+    async with db.pool().acquire() as conn:
+        session = await repo.get_session(conn, session_id)
+        if session is None:
+            raise NotFound("会话不存在")
+        anchor = None
+        if anchor_seq is not None:
+            anchor = await conn.fetchrow(
+                "SELECT * FROM timeline_anchors WHERE work_id = $1 AND seq = $2",
+                session["work_id"],
+                anchor_seq,
+            )
+        if anchor is None:
+            anchor = (
+                await repo.get_anchor(conn, session["pinned_anchor_id"])
+                if session.get("pinned_anchor_id")
+                else await repo.get_current_anchor(conn, session["user_id"], session["work_id"])
+            )
+        if anchor is None:
+            raise NotFound("作品没有可用的时间锚点")
+
+        record = await repo.get_prompt_input(conn, session_id, anchor["id"])
+        if record is None:
+            raise NotFound("这一章还没有装配过 prompt")
+        record["anchor"] = {"seq": anchor["seq"], "chapter_label": anchor["chapter_label"]}
+        return record
+
+
+@app.post("/api/prompt-overrides")
+async def create_prompt_override(payload: PromptOverrideRequest) -> Dict[str, Any]:
+    """F23：写一条四维度覆盖。同一个作用域 + 同一个 key 视为同一条，覆盖它的正文。
+
+    维度列留空 = 不限；填了就必须与上下文相等才生效。同一个 key 命中多条时
+    越具体越优先（会话 > 锚点 > 角色 > 用户）。
+    """
+
+    async with db.pool().acquire() as conn:
+        work = await repo.get_work_by_slug(conn, payload.work_slug)
+        if work is None:
+            raise NotFound("作品不存在")
+        anchor_id = None
+        if payload.anchor_seq is not None:
+            anchor_id = await conn.fetchval(
+                "SELECT id FROM timeline_anchors WHERE work_id = $1 AND seq = $2",
+                work["id"],
+                payload.anchor_seq,
+            )
+            if anchor_id is None:
+                raise NotFound("时间锚点不存在")
+        row = await repo.upsert_prompt_override(
+            conn,
+            work_id=work["id"],
+            key=payload.key,
+            body=payload.body,
+            persona_id=payload.persona_id,
+            character_id=payload.character_id,
+            anchor_id=anchor_id,
+            session_id=payload.session_id,
+            note=payload.note,
+        )
+        return {
+            "id": row["id"],
+            "key": payload.key,
+            "body": payload.body,
+            "anchor_seq": payload.anchor_seq,
+            "note": payload.note,
+        }
+
+
+@app.get("/api/sessions/{session_id}/prompt-overrides")
+async def session_prompt_overrides(
+    session_id: int, responder: Optional[str] = Query(None)
+) -> List[Dict[str, Any]]:
+    """F23：这次装配实际生效的覆盖——每个 key 只留最具体的一条，带来源标注。"""
+
+    async with db.pool().acquire() as conn:
+        session = await repo.get_session(conn, session_id)
+        if session is None:
+            raise NotFound("会话不存在")
+        members = await repo.list_session_members(conn, session_id)
+        character_ids = [m["member_id"] for m in members if m["member_kind"] == "character"]
+        characters = await repo.get_characters_by_ids(conn, character_ids)
+        if not characters:
+            raise NotFound("会话里没有角色")
+        target = characters[0]
+        if responder:
+            target = next((c for c in characters if c["slug"] == responder), None)
+            if target is None:
+                raise NotFound(f"角色 {responder} 不在会话中")
+        anchor = (
+            await repo.get_anchor(conn, session["pinned_anchor_id"])
+            if session.get("pinned_anchor_id")
+            else await repo.get_current_anchor(conn, session["user_id"], session["work_id"])
+        )
+        if anchor is None:
+            raise NotFound("作品没有可用的时间锚点")
+        return await repo.list_effective_prompt_overrides(
+            conn,
+            work_id=session["work_id"],
+            persona_id=session["persona_id"],
+            character_id=target["id"],
+            anchor_id=anchor["id"],
+            session_id=session_id,
+        )
 
 
 @app.post("/api/sessions/{session_id}/messages", response_model=ChatResponse)

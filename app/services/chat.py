@@ -14,7 +14,7 @@ import asyncpg
 from app import repository as repo
 from app.config import settings
 from app.errors import CharacterUnavailable, DomainError, NotFound
-from app.prompt import PromptContext, build_chat_messages, build_system_prompt
+from app.prompt import PROMPT_VERSION, PromptContext, build_chat_messages, build_system_prompt
 from app.providers.base import LLMProvider
 from app.services.relation_evolve import evolve_relations
 from app.services.summarize import refresh_anchor_summary
@@ -164,6 +164,15 @@ async def prepare_turn(
     )
     last_talk_anchor = await _resolve_last_talk_anchor(conn, history, anchor["id"])
 
+    # F23：四维度覆盖。同一 key 只会留最具体的一条，渲染时会标出来自哪一层。
+    overrides = await repo.list_effective_prompt_overrides(
+        conn,
+        work_id=session["work_id"],
+        persona_id=session["persona_id"],
+        character_id=responder["id"],
+        anchor_id=anchor["id"],
+        session_id=session_id,
+    )
     ctx = PromptContext(
         character=responder,
         anchor=anchor,
@@ -175,6 +184,7 @@ async def prepare_turn(
         peer_relations=peer_relations,
         declared_relations=declared_relations,
         last_talk_anchor=last_talk_anchor,
+        overrides=overrides,
     )
 
     # 先把用户消息落库，再连同它一起装配消息列表，保证 history 与 prompt 一致
@@ -200,6 +210,23 @@ async def prepare_turn(
     ctx.summaries = await _load_summaries(conn, session_id, anchor, history)
     messages = build_chat_messages(
         ctx, history, responder_id=responder["id"], name_by_id={c["id"]: c["name"] for c in characters}
+    )
+
+    # F23：记下这一章装配用的原料（关系快照 + 用到的摘要 + 卡片版本 + 模板版本）。
+    # 存原料而不是存正文——角色卡或模板一改，历史正文就成废纸了。
+    card_versions = {}
+    for character in characters:
+        version = await repo.ensure_character_card_version(conn, character["id"])
+        if version is not None:
+            card_versions[str(character["id"])] = version
+    await repo.upsert_prompt_input(
+        conn,
+        session_id=session_id,
+        anchor_id=anchor["id"],
+        relationship_snapshot=declared_relations,
+        summary_ids=[summary["id"] for summary in ctx.summaries],
+        card_versions=card_versions,
+        template_version=PROMPT_VERSION,
     )
 
     return PreparedTurn(
@@ -236,6 +263,22 @@ async def persist_reply(
             content=text,
             anchor_id=prepared.anchor["id"],
             model=f"{provider.name}:{provider.model}",
+        )
+        # F23：这一轮真实发出去的 prompt 留一份，回答「当时送进去的到底是什么」
+        await repo.save_prompt_snapshot(
+            conn,
+            session_id=prepared.session["id"],
+            anchor_id=prepared.anchor["id"],
+            character_id=prepared.responder["id"],
+            message_id=reply["id"],
+            provider=provider.name,
+            model=provider.model,
+            system_prompt=prepared.system_prompt,
+            messages=[
+                {"role": message.role, "content": message.content}
+                for message in prepared.messages
+            ],
+            template_version=PROMPT_VERSION,
         )
         await repo.touch_session(conn, prepared.session["id"])
         await repo.bump_user_character_relation(

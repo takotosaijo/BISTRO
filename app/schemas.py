@@ -95,3 +95,18 @@ class ChatResponse(BaseModel):
     action_options: List[Dict[str, Any]] = Field(
         default_factory=list, description="角色明确提出要求时给出的行动选项（F26，3~4 个）"
     )
+
+
+class PromptOverrideRequest(BaseModel):
+    """F23 四维度覆盖：四个维度列留空表示「不限」，填了才限定生效范围。"""
+
+    work_slug: str
+    key: str = Field(description="覆盖哪一格，例如「说话分寸」「额外交代」")
+    body: str
+    persona_id: Optional[int] = None
+    character_id: Optional[int] = None
+    anchor_seq: Optional[int] = Field(
+        None, description="按时间线序号限定；同 key 命中多条时会话 > 锚点 > 角色 > 用户"
+    )
+    session_id: Optional[int] = None
+    note: Optional[str] = Field(None, description="为什么加这条，给人看的")

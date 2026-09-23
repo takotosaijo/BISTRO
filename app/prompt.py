@@ -17,6 +17,11 @@ from typing import Any, Dict, List, Optional
 
 from app.providers.base import ChatMessage
 
+# 模板版本（F23）：prompt 的骨架与说话规矩都写在**这个文件**里，改了就把这个号 +1。
+# 为什么不建「模板表」：模板就是代码，代码有 git；再在库里存一份等于同一件事维护两遍，
+# 早晚出现「库里的模板和真正在跑的代码对不上」。快照只记这个号，配合 git 就能定位当时的文本。
+PROMPT_VERSION = 1
+
 WORLD_STATE_LABELS = {
     "梁山之主": "梁山之主",
     "梁山成型": "梁山局势",
@@ -40,6 +45,7 @@ class PromptContext:
     peer_relations: List[Dict[str, Any]] = field(default_factory=list)
     last_talk_anchor: Optional[Dict[str, Any]] = None
     summaries: List[Dict[str, Any]] = field(default_factory=list)  # F22：更早各章的提要
+    overrides: List[Dict[str, Any]] = field(default_factory=list)  # F23：四维度覆盖
 
     @property
     def user_name(self) -> str:
@@ -248,6 +254,17 @@ def build_system_prompt(ctx: PromptContext) -> str:
     lines.append("3. 一次回复一到三句，像真人当面说话，不要长篇大论，不要写成小说旁白。")
     lines.append(f"4. 不要替{ctx.user_name}说话，也不要替他做决定。")
     lines.append("5. 可以有自己的脾气：可以拒绝、可以反问、可以不接话。")
+
+    if ctx.overrides:
+        # F23：四维度覆盖。同一个 key 只会留一条（越具体越优先），渲染时标出它来自哪一层，
+        # 这样「他为什么这么说」查得回是哪一层让它这么说的。
+        lines.append("")
+        lines.append("# 本轮特别交代")
+        lines.append("下面几条比上面的通则更具体，冲突时以它们为准：")
+        for override in ctx.overrides:
+            scope = override.get("scope") or ""
+            key = override.get("key") or ""
+            lines.append(f"- [{scope}] {key}：{override.get('body', '')}")
 
     if session.get("session_type") == "group":
         others = [p["name"] for p in ctx.peers if p["id"] != c["id"]]

@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, Dict, List, Optional, Sequence
 
 import asyncpg
@@ -952,3 +954,310 @@ async def get_last_action_option_labels(
         for item in row["options"]
         if isinstance(item, dict) and item.get("label")
     ]
+
+
+# ---------------------------------------------------------------------------
+# F23：prompt 的版本与留痕
+# ---------------------------------------------------------------------------
+
+# 「卡片」= 会进 prompt 的那部分。canon_arc 故意不在里面：它永远不进 prompt（F13），
+# 改它不该产生一个新版本，否则版本号会被一堆与 prompt 无关的编辑顶起来。
+CARD_VERSION_FIELDS = (
+    "slug",
+    "name",
+    "aliases",
+    "identity",
+    "personality",
+    "speech_style",
+    "knowledge_scope",
+    "bottom_lines",
+    "taboos",
+    "sample_lines",
+    "greeting",
+)
+
+
+def card_content_hash(card: Dict[str, Any]) -> str:
+    payload = json.dumps(card, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+async def ensure_character_card_version(
+    conn: asyncpg.Connection, character_id: int
+) -> Optional[int]:
+    """返回这个角色卡当前的版本号；内容变了就追加一版（F23）。
+
+    装配 prompt 时顺手调用：内容没变就是一个 SELECT，不会每轮写库。
+    """
+
+    row = await conn.fetchrow(
+        f"SELECT {', '.join(CARD_VERSION_FIELDS)} FROM characters WHERE id = $1", character_id
+    )
+    if row is None:
+        return None
+    card = {field: row[field] for field in CARD_VERSION_FIELDS}
+    content_hash = card_content_hash(card)
+
+    latest = await conn.fetchrow(
+        """
+        SELECT version, content_hash FROM character_card_versions
+        WHERE character_id = $1 ORDER BY version DESC LIMIT 1
+        """,
+        character_id,
+    )
+    if latest and latest["content_hash"] == content_hash:
+        await conn.execute(
+            "UPDATE characters SET card_version = $2 WHERE id = $1 AND card_version <> $2",
+            character_id,
+            latest["version"],
+        )
+        return latest["version"]
+
+    version = (latest["version"] + 1) if latest else 1
+    await conn.execute(
+        """
+        INSERT INTO character_card_versions (character_id, version, content_hash, card)
+        VALUES ($1, $2, $3, $4) ON CONFLICT (character_id, version) DO NOTHING
+        """,
+        character_id,
+        version,
+        content_hash,
+        card,
+    )
+    await conn.execute(
+        "UPDATE characters SET card_version = $2 WHERE id = $1", character_id, version
+    )
+    return version
+
+
+async def upsert_prompt_input(
+    conn: asyncpg.Connection,
+    *,
+    session_id: int,
+    anchor_id: int,
+    relationship_snapshot: List[Dict[str, Any]],
+    summary_ids: Sequence[int],
+    card_versions: Dict[str, Any],
+    template_version: int,
+) -> None:
+    """记下这一章装配 prompt 用到的原料（F23）。同一章滚动更新，不新增行。"""
+
+    await conn.execute(
+        """
+        INSERT INTO prompt_inputs
+          (session_id, anchor_id, relationship_snapshot, summary_ids, card_versions, template_version)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (session_id, anchor_id) DO UPDATE
+          SET relationship_snapshot = EXCLUDED.relationship_snapshot,
+              summary_ids           = EXCLUDED.summary_ids,
+              card_versions         = EXCLUDED.card_versions,
+              template_version      = EXCLUDED.template_version,
+              updated_at            = now()
+        """,
+        session_id,
+        anchor_id,
+        list(relationship_snapshot),
+        list(summary_ids),
+        card_versions,
+        template_version,
+    )
+
+
+async def get_prompt_input(
+    conn: asyncpg.Connection, session_id: int, anchor_id: int
+) -> Optional[Dict[str, Any]]:
+    return row_to_dict(
+        await conn.fetchrow(
+            """
+            SELECT id, session_id, anchor_id, relationship_snapshot, summary_ids,
+                   card_versions, template_version, updated_at
+            FROM prompt_inputs WHERE session_id = $1 AND anchor_id = $2
+            """,
+            session_id,
+            anchor_id,
+        )
+    )
+
+
+async def save_prompt_snapshot(
+    conn: asyncpg.Connection,
+    *,
+    session_id: int,
+    anchor_id: Optional[int],
+    character_id: Optional[int],
+    message_id: Optional[int],
+    provider: str,
+    model: str,
+    system_prompt: str,
+    messages: List[Dict[str, str]],
+    template_version: int,
+) -> int:
+    """把这一轮真实发出去的 prompt 存一份（F23）。"""
+
+    return await conn.fetchval(
+        """
+        INSERT INTO prompt_snapshots
+          (session_id, anchor_id, character_id, message_id, provider, model,
+           system_prompt, messages, template_version)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        RETURNING id
+        """,
+        session_id,
+        anchor_id,
+        character_id,
+        message_id,
+        provider,
+        model,
+        system_prompt,
+        list(messages),
+        template_version,
+    )
+
+
+async def get_prompt_snapshot(
+    conn: asyncpg.Connection, session_id: int, message_id: Optional[int] = None
+) -> Optional[Dict[str, Any]]:
+    """取某条回复当时的快照；不给 message_id 就取最近一条。"""
+
+    return row_to_dict(
+        await conn.fetchrow(
+            """
+            SELECT s.id, s.session_id, s.anchor_id, s.character_id, s.message_id,
+                   s.provider, s.model, s.system_prompt, s.messages,
+                   s.template_version, s.created_at,
+                   c.name AS character_name, a.chapter_label
+            FROM prompt_snapshots s
+            LEFT JOIN characters c ON c.id = s.character_id
+            LEFT JOIN timeline_anchors a ON a.id = s.anchor_id
+            WHERE s.session_id = $1
+              AND ($2::bigint IS NULL OR s.message_id = $2)
+            ORDER BY s.id DESC
+            LIMIT 1
+            """,
+            session_id,
+            message_id,
+        )
+    )
+
+
+# 四维度覆盖的优先级（F23）：越具体越优先。数值只在 SQL 里比较，别在应用层再排一遍。
+OVERRIDE_SCOPE_CASE = """
+         CASE WHEN o.session_id   IS NOT NULL THEN 4
+              WHEN o.anchor_id    IS NOT NULL THEN 3
+              WHEN o.character_id IS NOT NULL THEN 2
+              ELSE 1 END
+"""
+
+OVERRIDE_LABEL_CASE = """
+         CASE WHEN o.session_id   IS NOT NULL THEN '会话'
+              WHEN o.anchor_id    IS NOT NULL THEN '锚点'
+              WHEN o.character_id IS NOT NULL THEN '角色'
+              ELSE '用户' END
+"""
+
+
+async def list_effective_prompt_overrides(
+    conn: asyncpg.Connection,
+    *,
+    work_id: int,
+    persona_id: Optional[int],
+    character_id: Optional[int],
+    anchor_id: Optional[int],
+    session_id: Optional[int],
+) -> List[Dict[str, Any]]:
+    """这次装配实际生效的覆盖，每个 key 只留最具体的一条（F23）。
+
+    四个维度列留空 = 不限；填了就必须与当前上下文相等。空 key 取 specificity 最高的那条，
+    一样高就取新的（id 大的）。
+    """
+
+    return rows_to_dicts(
+        await conn.fetch(
+            f"""
+            WITH scoped AS (
+              SELECT o.id, o.key, o.body, o.note,
+                     {OVERRIDE_SCOPE_CASE} AS specificity,
+                     {OVERRIDE_LABEL_CASE} AS scope
+              FROM prompt_overrides o
+              WHERE o.is_active
+                AND o.work_id = $1
+                AND (o.persona_id   IS NULL OR o.persona_id   = $2::bigint)
+                AND (o.character_id IS NULL OR o.character_id = $3::bigint)
+                AND (o.anchor_id    IS NULL OR o.anchor_id    = $4::bigint)
+                AND (o.session_id   IS NULL OR o.session_id   = $5::bigint)
+            ), ranked AS (
+              SELECT *, row_number() OVER (
+                PARTITION BY key ORDER BY specificity DESC, id DESC
+              ) AS rn
+              FROM scoped
+            )
+            SELECT key, body, note, scope, specificity
+            FROM ranked WHERE rn = 1
+            ORDER BY key
+            """,
+            work_id,
+            persona_id,
+            character_id,
+            anchor_id,
+            session_id,
+        )
+    )
+
+
+async def upsert_prompt_override(
+    conn: asyncpg.Connection,
+    *,
+    work_id: int,
+    key: str,
+    body: str,
+    persona_id: Optional[int] = None,
+    character_id: Optional[int] = None,
+    anchor_id: Optional[int] = None,
+    session_id: Optional[int] = None,
+    note: Optional[str] = None,
+) -> Dict[str, Any]:
+    """写一条覆盖。同一个作用域 + 同一个 key 视为同一条，覆盖它的正文。
+
+    这里用 COALESCE 比较而不是 `=`：维度列可空，而 SQL 里 NULL = NULL 是 NULL。
+    """
+
+    row = await conn.fetchrow(
+        """
+        UPDATE prompt_overrides
+           SET body = $3, note = $8, is_active = true, updated_at = now()
+         WHERE work_id = $1 AND key = $2
+           AND persona_id   IS NOT DISTINCT FROM $4::bigint
+           AND character_id IS NOT DISTINCT FROM $5::bigint
+           AND anchor_id    IS NOT DISTINCT FROM $6::bigint
+           AND session_id   IS NOT DISTINCT FROM $7::bigint
+        RETURNING id
+        """,
+        work_id,
+        key,
+        body,
+        persona_id,
+        character_id,
+        anchor_id,
+        session_id,
+        note,
+    )
+    if row is not None:
+        return dict(row)
+    return dict(
+        await conn.fetchrow(
+            """
+            INSERT INTO prompt_overrides
+              (work_id, key, body, persona_id, character_id, anchor_id, session_id, note)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING id
+            """,
+            work_id,
+            key,
+            body,
+            persona_id,
+            character_id,
+            anchor_id,
+            session_id,
+            note,
+        )
+    )

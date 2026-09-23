@@ -506,6 +506,93 @@ COMMENT ON COLUMN session_summaries.covered_from_seq IS
   '只有 covered_to_seq 的话，窗口跨过章节边界时会算错。';
 
 -- ---------------------------------------------------------------------------
+-- 9.5 Prompt 管理（F23）：锚点输入 + 版本 + 真实快照
+-- ---------------------------------------------------------------------------
+
+-- 角色卡的历史版本。characters.card_version 一直在，但没有对应的内容；
+-- 这里给它补上：卡片一改就追加一条，回答「他当时看到的是哪一版卡」。
+CREATE TABLE character_card_versions (
+  id           bigserial PRIMARY KEY,
+  character_id bigint NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+  version      int NOT NULL,
+  content_hash text NOT NULL,          -- 卡内容的 sha256，用来判断「到底改没改」
+  card         jsonb NOT NULL,         -- 这一版的完整角色卡（恒定层 + 别名等）
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (character_id, version)
+);
+
+COMMENT ON TABLE character_card_versions IS
+  '角色卡的历史版本（F23）。装配 prompt 时比对哈希，变了就追加一版；'
+  'characters.card_version 指向当前版本。';
+
+-- 锚点输入：这个会话在**这一章**装配 prompt 时用到的东西。
+-- 不存整段 prompt 文本——角色卡或模板一改，存下来的正文就成了废纸；
+-- 存原料 + 版本，才能重新装配出「这一章现在的 prompt」。
+CREATE TABLE prompt_inputs (
+  id                    bigserial PRIMARY KEY,
+  session_id            bigint NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  anchor_id             bigint NOT NULL REFERENCES timeline_anchors(id) ON DELETE CASCADE,
+  relationship_snapshot jsonb NOT NULL DEFAULT '[]'::jsonb,  -- 该锚点生效的关系声明
+  summary_ids           bigint[] NOT NULL DEFAULT '{}',      -- 用到的会话摘要
+  card_versions         jsonb NOT NULL DEFAULT '{}'::jsonb,  -- {character_id: version}
+  template_version      int NOT NULL,
+  updated_at            timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (session_id, anchor_id)
+);
+
+COMMENT ON TABLE prompt_inputs IS
+  '按锚点存的 prompt 动态输入（F23）：该章及之前的摘要 + 该锚点解析出的关系快照 + '
+  '卡片版本与模板版本。重新装配「这一章现在的 prompt」用这份原料，不用历史正文。';
+
+-- 真实快照：某一句回复当时到底把什么送进了模型。
+CREATE TABLE prompt_snapshots (
+  id               bigserial PRIMARY KEY,
+  session_id       bigint NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  anchor_id        bigint REFERENCES timeline_anchors(id) ON DELETE SET NULL,
+  character_id     bigint REFERENCES characters(id) ON DELETE SET NULL,
+  message_id       bigint REFERENCES messages(id) ON DELETE SET NULL,  -- 这一轮落库的回复
+  provider         text NOT NULL,
+  model            text NOT NULL,
+  system_prompt    text NOT NULL,
+  messages         jsonb NOT NULL,     -- 送进去的对话（system 单列在上一列）
+  template_version int NOT NULL,
+  created_at       timestamptz NOT NULL DEFAULT now()
+);
+
+COMMENT ON TABLE prompt_snapshots IS
+  '真实发出的 prompt 快照（F23）：回答「某年某月某一句回复，当时送进去的到底是什么」。'
+  '这是留痕，不是事实来源——复现「这一章的 prompt」要用 prompt_inputs + 版本。';
+
+CREATE INDEX prompt_snapshots_session_idx ON prompt_snapshots (session_id, id DESC);
+
+-- 四维度覆盖（F23）：用户 × 角色 × 锚点 × 会话。
+-- 四个维度列都是可空的：填了才限制「只在符合这个维度的场景生效」，留空表示不限。
+-- 同一个 key 命中多条时，**越具体越优先**：会话 > 锚点 > 角色 > 用户（见 DECISIONS 2026-09-23）。
+CREATE TABLE prompt_overrides (
+  id           bigserial PRIMARY KEY,
+  work_id      bigint NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+  key          text NOT NULL,          -- 覆盖哪一格，例如 '说话分寸' / '额外交代'
+  body         text NOT NULL,
+  persona_id   bigint REFERENCES personas(id) ON DELETE CASCADE,
+  character_id bigint REFERENCES characters(id) ON DELETE CASCADE,
+  anchor_id    bigint REFERENCES timeline_anchors(id) ON DELETE CASCADE,
+  session_id   bigint REFERENCES sessions(id) ON DELETE CASCADE,
+  note         text,                   -- 为什么加这条（给人看的）
+  is_active    boolean NOT NULL DEFAULT true,
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  updated_at   timestamptz NOT NULL DEFAULT now()
+);
+
+COMMENT ON TABLE prompt_overrides IS
+  'prompt 的四维度覆盖（F23）：用户 / 角色 / 锚点 / 会话各一列，留空表示不限。'
+  '同一个 key 命中多条时越具体越优先（会话 > 锚点 > 角色 > 用户），'
+  '渲染进 prompt 时会标出来自哪一层。';
+
+CREATE INDEX prompt_overrides_scope_idx
+  ON prompt_overrides (work_id, key, persona_id, character_id, anchor_id, session_id)
+  WHERE is_active;
+
+-- ---------------------------------------------------------------------------
 -- 10. 关系解析视图：用户覆盖优先，并受时间线约束
 -- ---------------------------------------------------------------------------
 
